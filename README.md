@@ -5,12 +5,12 @@ This project runs Dropbox in a container and applies selective sync based on `PR
 ## Behavior
 
 - `PREFIX_PATH` selects the base Dropbox path for selective sync (default `/`).
-- `SYNC_FOLDERS` is a comma-separated allow-list of folder names inside `PREFIX_PATH`.
+- `SYNC_FOLDERS` is a comma-separated allow-list of first-level folder names inside `PREFIX_PATH`.
 - On startup, the container:
   1. starts Dropbox daemon,
   2. reads folder list under `PREFIX_PATH`,
   3. excludes every folder not listed in `SYNC_FOLDERS`,
-  4. ensures listed folders are included.
+  4. ensures listed folders are included (including all subdirectories).
 
 If `SYNC_FOLDERS` is empty, selective sync is left unchanged.
 
@@ -57,7 +57,7 @@ docker compose restart
 ## Notes
 
 - `PREFIX_PATH` can be `/`, `/Team`, or `Team/Clients` (leading/trailing `/` optional).
-- Folder names in `SYNC_FOLDERS` are matched within `PREFIX_PATH`.
+- Folder names in `SYNC_FOLDERS` are first-level names within `PREFIX_PATH`; each selected folder syncs recursively.
 - Spaces around commas are allowed.
 - Changing `SYNC_FOLDERS` requires container restart to re-apply exclusions.
 - For institutional/team accounts with spaces in folder names, use exact names and wrap values in quotes.
@@ -67,7 +67,7 @@ docker compose restart
 
 ## Build and Push (Docker Hub)
 
-Set `REPO` and `VERSION` inside [build-and-push.sh](/data/UCF%20Dropbox/Adan%20Vela/git-ucf/onlydropbox/build-and-push.sh), then run:
+Set `REPO` and `VERSION` inside [build-and-push.sh], then run:
 
 ```bash
 ./build-and-push.sh
