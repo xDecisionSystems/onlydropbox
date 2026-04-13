@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Set variables here
 REPO="adclab/onlydropbox"
-VERSION="v0.4"
+VERSION="v0.1"
 
 # Build image with both tags
 docker build \

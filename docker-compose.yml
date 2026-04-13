@@ -1,6 +1,8 @@
+version: "3.8"
+
 services:
   dropbox:
-    build: .
+    image: adclab/onlydropbox:latest
     container_name: onlydropbox
     restart: unless-stopped
     environment:
