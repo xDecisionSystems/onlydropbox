@@ -1,0 +1,15 @@
+services:
+  dropbox:
+    build: .
+    container_name: onlydropbox
+    restart: unless-stopped
+    environment:
+      # Base Dropbox path where selective sync rules are applied.
+      # Example: "/" (root), "/Team", "Team/Clients"
+      PREFIX_PATH: "/"
+      # Comma-separated folder names to sync within PREFIX_PATH.
+      # Example: "Work,Photos,Taxes"
+      SYNC_FOLDERS: ""
+    volumes:
+      - ./data/dropbox-config:/root/.dropbox
+      - ./data/dropbox-sync:/root/Dropbox
