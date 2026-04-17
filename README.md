@@ -49,6 +49,25 @@ After linking, restart once:
 docker compose restart
 ```
 
+## LXC Interactive Install
+
+Inside a Debian/Ubuntu LXC container, you can run the interactive installer. It asks for `PREFIX_PATH` and `SYNC_FOLDERS`, writes `.env`, installs Docker if needed, and starts `onlydropbox`.
+
+If you already cloned this repo:
+
+```bash
+chmod +x install-onlydropbox-lxc.sh
+./install-onlydropbox-lxc.sh
+```
+
+If you only want to download and run the script:
+
+```bash
+curl -A "Mozilla/5.0" -L -o install-onlydropbox-lxc.sh https://raw.githubusercontent.com/adclab/onlydropbox/main/install-onlydropbox-lxc.sh
+chmod +x install-onlydropbox-lxc.sh
+./install-onlydropbox-lxc.sh
+```
+
 ## Volumes
 
 - `./data/dropbox-config` -> `/root/.dropbox` (account/config)
