@@ -37,6 +37,54 @@ run_privileged() {
   fi
 }
 
+reexec_as_dropbox_user() {
+  if [[ "${EUID}" -ne 0 ]]; then
+    return 0
+  fi
+  if [[ "${ONLYDROPBOX_AS_USER:-}" == "1" ]]; then
+    return 0
+  fi
+
+  local dropbox_user="${DROPBOX_USER:-dropbox}"
+  local dropbox_home="/home/$dropbox_user"
+  local script_source
+  local script_target
+
+  script_source="$(readlink -f "$0" 2>/dev/null || printf '%s' "$0")"
+  if ! id -u "$dropbox_user" >/dev/null 2>&1; then
+    log "Creating dedicated user '$dropbox_user'."
+    useradd -m -d "$dropbox_home" -U -s /bin/bash "$dropbox_user"
+  else
+    log "Using existing user '$dropbox_user'."
+  fi
+
+  script_target="$script_source"
+  if command -v runuser >/dev/null 2>&1; then
+    if ! runuser -u "$dropbox_user" -- test -r "$script_target" >/dev/null 2>&1; then
+      script_target="/tmp/install-onlydropbox-lxc.sh"
+      log "Copying installer to $script_target so '$dropbox_user' can execute it."
+      cp "$script_source" "$script_target"
+      chown "$dropbox_user":"$dropbox_user" "$script_target"
+      chmod 755 "$script_target"
+    fi
+
+    log "Re-running installer as '$dropbox_user'."
+    exec runuser -u "$dropbox_user" -- env \
+      ONLYDROPBOX_AS_USER=1 \
+      DROPBOX_USER="$dropbox_user" \
+      HOME="$dropbox_home" \
+      LC_ALL=C \
+      bash "$script_target"
+  fi
+
+  script_target="/tmp/install-onlydropbox-lxc.sh"
+  log "runuser not found; using su. Copying installer to $script_target."
+  cp "$script_source" "$script_target"
+  chown "$dropbox_user":"$dropbox_user" "$script_target"
+  chmod 755 "$script_target"
+  exec su - "$dropbox_user" -c "ONLYDROPBOX_AS_USER=1 DROPBOX_USER='$dropbox_user' LC_ALL=C bash '$script_target'"
+}
+
 trim() {
   local s="$1"
   s="${s#${s%%[![:space:]]*}}"
@@ -258,36 +306,40 @@ if ! command -v apt-get >/dev/null 2>&1; then
   error "apt-get not found. This installer currently supports Debian/Ubuntu-based LXC containers."
 fi
 
-log "Installing required packages (curl + runtime dependencies)."
-run_privileged apt-get update
-run_privileged env DEBIAN_FRONTEND=noninteractive apt-get install -y \
-  libasound2 \
-  libatk-bridge2.0-0 \
-  libatk1.0-0 \
-  libcairo2 \
-  ca-certificates \
-  curl \
-  libatomic1 \
-  libdbus-1-3 \
-  libglib2.0-0 \
-  libgtk-3-0 \
-  libnotify4 \
-  libnspr4 \
-  libnss3 \
-  libpango-1.0-0 \
-  libstdc++6 \
-  libx11-6 \
-  libxext6 \
-  libxfixes3 \
-  libxi6 \
-  libxrandr2 \
-  libxrender1 \
-  libxss1 \
-  libxtst6 \
-  tar \
-  python3 \
-  procps \
-  xdg-utils
+if [[ "${EUID}" -eq 0 && "${ONLYDROPBOX_AS_USER:-}" != "1" ]]; then
+  log "Installing required packages (curl + runtime dependencies)."
+  run_privileged apt-get update
+  run_privileged env DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    libasound2 \
+    libatk-bridge2.0-0 \
+    libatk1.0-0 \
+    libcairo2 \
+    ca-certificates \
+    curl \
+    libatomic1 \
+    libdbus-1-3 \
+    libglib2.0-0 \
+    libgtk-3-0 \
+    libnotify4 \
+    libnspr4 \
+    libnss3 \
+    libpango-1.0-0 \
+    libstdc++6 \
+    libx11-6 \
+    libxext6 \
+    libxfixes3 \
+    libxi6 \
+    libxrandr2 \
+    libxrender1 \
+    libxss1 \
+    libxtst6 \
+    tar \
+    python3 \
+    procps \
+    xdg-utils
+
+  reexec_as_dropbox_user
+fi
 
 PREFIX_PATH="$(prompt "PREFIX_PATH (Dropbox base path)" "/")"
 SYNC_FOLDERS="$(prompt "SYNC_FOLDERS (comma-separated first-level folders to sync; empty = unchanged)" "")"
