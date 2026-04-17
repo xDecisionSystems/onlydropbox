@@ -63,7 +63,7 @@ chmod +x install-onlydropbox-lxc.sh
 If you only want to download and run the script:
 
 ```bash
-curl -A "Mozilla/5.0" -L -o install-onlydropbox-lxc.sh https://raw.githubusercontent.com/adclab/onlydropbox/main/install-onlydropbox-lxc.sh
+curl -A "Mozilla/5.0" -L -o install-onlydropbox-lxc.sh https://raw.githubusercontent.com/xdecisionsystems/onlydropbox/main/install-onlydropbox-lxc.sh
 chmod +x install-onlydropbox-lxc.sh
 ./install-onlydropbox-lxc.sh
 ```
