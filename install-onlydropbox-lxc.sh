@@ -347,7 +347,7 @@ if [[ "${EUID}" -eq 0 && "${ONLYDROPBOX_AS_USER:-}" != "1" ]]; then
   run_privileged apt-get update
   run_privileged env DEBIAN_FRONTEND=noninteractive apt-get install -y \
     ca-certificates \
-    curl \
+    wget \
     libatomic1 \
     libglib2.0-0 \
     libstdc++6 \
@@ -380,14 +380,14 @@ fi
 if [[ ! -x "$DROPBOX_DAEMON" ]]; then
   log "Installing Dropbox headless daemon to $DROPBOX_DIST_DIR"
   TMP_TAR="$(mktemp)"
-  curl -fsSL "$DROPBOX_DOWNLOAD_URL" -o "$TMP_TAR"
+  wget -qO "$TMP_TAR" "$DROPBOX_DOWNLOAD_URL"
   tar -xzf "$TMP_TAR" -C "$HOME_DIR"
   rm -f "$TMP_TAR"
 fi
 
 if [[ ! -f "$DROPBOX_CLI" ]]; then
   log "Installing Dropbox CLI to $DROPBOX_CLI"
-  curl -fsSL "$DROPBOX_CLI_URL" -o "$DROPBOX_CLI"
+  wget -qO "$DROPBOX_CLI" "$DROPBOX_CLI_URL"
   chmod +x "$DROPBOX_CLI"
 fi
 

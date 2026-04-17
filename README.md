@@ -51,7 +51,15 @@ docker compose restart
 
 ## LXC Interactive Install
 
-Inside a Debian/Ubuntu LXC container, you can run the interactive installer. It asks for `PREFIX_PATH` and `SYNC_FOLDERS`, installs headless Dropbox directly (no Docker), starts the Dropbox daemon, and applies selective sync settings.
+Inside a Debian/Ubuntu LXC container, you can run the interactive installer. It:
+
+- installs a minimal package baseline,
+- prompts for `DROPBOX_USER` (valid Linux username),
+- creates/reuses that user,
+- runs Dropbox as that user (not root),
+- asks for `PREFIX_PATH` and `SYNC_FOLDERS`,
+- installs headless Dropbox directly (no Docker),
+- starts the Dropbox daemon, and applies selective sync settings.
 
 If you already cloned this repo:
 
@@ -63,7 +71,7 @@ chmod +x install-onlydropbox-lxc.sh
 If you only want to download and run the script:
 
 ```bash
-curl -A "Mozilla/5.0" -L -o install-onlydropbox-lxc.sh https://raw.githubusercontent.com/xdecisionsystems/onlydropbox/main/install-onlydropbox-lxc.sh
+wget -O install-onlydropbox-lxc.sh https://raw.githubusercontent.com/xdecisionsystems/onlydropbox/main/install-onlydropbox-lxc.sh
 chmod +x install-onlydropbox-lxc.sh
 ./install-onlydropbox-lxc.sh
 ```
@@ -75,6 +83,7 @@ chmod +x install-onlydropbox-lxc.sh
 
 ## Notes
 
+- In LXC install mode, Dropbox state lives under the selected user's home (for example `/home/dropbox/.dropbox`), not `/root`.
 - `PREFIX_PATH` can be `/`, `/Team`, or `Team/Clients` (leading/trailing `/` optional).
 - Folder names in `SYNC_FOLDERS` are first-level names within `PREFIX_PATH`; each selected folder syncs recursively.
 - Spaces around commas are allowed.
