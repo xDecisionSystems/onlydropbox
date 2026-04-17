@@ -134,6 +134,35 @@ wait_for_dropbox_ready() {
   return 1
 }
 
+tail_daemon_log() {
+  local log_file="/tmp/onlydropbox-dropboxd.log"
+  if [[ -f "$log_file" ]]; then
+    log "Recent Dropbox daemon log (last 60 lines):"
+    tail -n 60 "$log_file" >&2 || true
+  else
+    log "Dropbox daemon log file not found at $log_file"
+  fi
+}
+
+start_dropbox_daemon() {
+  if pgrep -f "$DROPBOX_DAEMON" >/dev/null 2>&1; then
+    log "Dropbox daemon is already running."
+    return 0
+  fi
+
+  log "Starting Dropbox daemon in background."
+  nohup "$DROPBOX_DAEMON" >/tmp/onlydropbox-dropboxd.log 2>&1 &
+  sleep 4
+
+  if pgrep -f "$DROPBOX_DAEMON" >/dev/null 2>&1; then
+    log "Dropbox daemon started."
+    return 0
+  fi
+
+  tail_daemon_log
+  error "Dropbox daemon exited right after start. This is usually a runtime dependency or unsupported filesystem issue in the container."
+}
+
 configure_selective_sync() {
   parse_sync_folders
   normalize_prefix_path
@@ -212,6 +241,9 @@ run_privileged apt-get update
 run_privileged env DEBIAN_FRONTEND=noninteractive apt-get install -y \
   ca-certificates \
   curl \
+  libatomic1 \
+  libglib2.0-0 \
+  libstdc++6 \
   tar \
   python3 \
   procps
@@ -248,13 +280,7 @@ if [[ ! -f "$DROPBOX_CLI" ]]; then
   chmod +x "$DROPBOX_CLI"
 fi
 
-if pgrep -f "$DROPBOX_DAEMON" >/dev/null 2>&1; then
-  log "Dropbox daemon is already running."
-else
-  log "Starting Dropbox daemon in background."
-  nohup "$DROPBOX_DAEMON" >/tmp/onlydropbox-dropboxd.log 2>&1 &
-  sleep 3
-fi
+start_dropbox_daemon
 
 status_out="$("$DROPBOX_CLI" status 2>&1 || true)"
 if [[ "$status_out" == *"not linked"* || "$status_out" == *"This computer isn't linked"* || "$status_out" == *"isn't linked to any Dropbox account"* || "$status_out" == *"Please visit "*"/cli_link_nonce"* ]]; then
@@ -288,6 +314,7 @@ After linking completes, re-run this installer.
 EOF
     exit 0
   fi
+  tail_daemon_log
   error "Dropbox daemon did not become ready. Check /tmp/onlydropbox-dropboxd.log and run '$DROPBOX_CLI status'."
 fi
 
