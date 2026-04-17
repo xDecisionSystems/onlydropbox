@@ -144,6 +144,27 @@ tail_daemon_log() {
   fi
 }
 
+diagnose_dropbox_runtime() {
+  if ! command -v ldd >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local missing
+  missing="$(ldd "$DROPBOX_DAEMON" 2>/dev/null | awk '/not found/{print $1}' | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
+  if [[ -n "$missing" ]]; then
+    log "Missing shared libraries detected: $missing"
+    cat >&2 <<'EOF'
+Potential fix:
+  apt-get update && apt-get install -y \
+    libx11-6 libxext6 libxrender1 libxrandr2 libxfixes3 libxi6 libxtst6 libxss1 \
+    libatk1.0-0 libatk-bridge2.0-0 libgtk-3-0 libnotify4 libdbus-1-3 libasound2 \
+    libnss3 libnspr4 libpango-1.0-0 libcairo2 xdg-utils
+EOF
+  else
+    log "No missing shared libraries reported by ldd."
+  fi
+}
+
 start_dropbox_daemon() {
   if pgrep -f "$DROPBOX_DAEMON" >/dev/null 2>&1; then
     log "Dropbox daemon is already running."
@@ -160,6 +181,7 @@ start_dropbox_daemon() {
   fi
 
   tail_daemon_log
+  diagnose_dropbox_runtime
   error "Dropbox daemon exited right after start. This is usually a runtime dependency or unsupported filesystem issue in the container."
 }
 
@@ -239,14 +261,33 @@ fi
 log "Installing required packages (curl + runtime dependencies)."
 run_privileged apt-get update
 run_privileged env DEBIAN_FRONTEND=noninteractive apt-get install -y \
+  libasound2 \
+  libatk-bridge2.0-0 \
+  libatk1.0-0 \
+  libcairo2 \
   ca-certificates \
   curl \
   libatomic1 \
+  libdbus-1-3 \
   libglib2.0-0 \
+  libgtk-3-0 \
+  libnotify4 \
+  libnspr4 \
+  libnss3 \
+  libpango-1.0-0 \
   libstdc++6 \
+  libx11-6 \
+  libxext6 \
+  libxfixes3 \
+  libxi6 \
+  libxrandr2 \
+  libxrender1 \
+  libxss1 \
+  libxtst6 \
   tar \
   python3 \
-  procps
+  procps \
+  xdg-utils
 
 PREFIX_PATH="$(prompt "PREFIX_PATH (Dropbox base path)" "/")"
 SYNC_FOLDERS="$(prompt "SYNC_FOLDERS (comma-separated first-level folders to sync; empty = unchanged)" "")"
@@ -315,6 +356,7 @@ EOF
     exit 0
   fi
   tail_daemon_log
+  diagnose_dropbox_runtime
   error "Dropbox daemon did not become ready. Check /tmp/onlydropbox-dropboxd.log and run '$DROPBOX_CLI status'."
 fi
 
