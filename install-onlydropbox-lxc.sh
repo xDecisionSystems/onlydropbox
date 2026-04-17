@@ -187,6 +187,19 @@ DROPBOX_CLI="$HOME_DIR/.local/bin/dropbox"
 DROPBOX_DOWNLOAD_URL="https://www.dropbox.com/download?plat=lnx.x86_64"
 DROPBOX_CLI_URL="https://www.dropbox.com/download?dl=packages/dropbox.py"
 
+if ! command -v apt-get >/dev/null 2>&1; then
+  error "apt-get not found. This installer currently supports Debian/Ubuntu-based LXC containers."
+fi
+
+log "Installing required packages (curl + runtime dependencies)."
+run_privileged apt-get update
+run_privileged env DEBIAN_FRONTEND=noninteractive apt-get install -y \
+  ca-certificates \
+  curl \
+  tar \
+  python3 \
+  procps
+
 PREFIX_PATH="$(prompt "PREFIX_PATH (Dropbox base path)" "/")"
 SYNC_FOLDERS="$(prompt "SYNC_FOLDERS (comma-separated first-level folders to sync; empty = unchanged)" "")"
 
@@ -203,13 +216,6 @@ log "Saved config to $ENV_FILE"
 ARCH="$(uname -m)"
 if [[ "$ARCH" != "x86_64" ]]; then
   error "Dropbox headless Linux binary from this script currently supports x86_64. Detected: $ARCH"
-fi
-
-if ! command -v curl >/dev/null 2>&1 || ! command -v tar >/dev/null 2>&1 || ! command -v python3 >/dev/null 2>&1; then
-  log "Installing required packages (curl, tar, python3, ca-certificates)."
-  command -v apt-get >/dev/null 2>&1 || error "apt-get not found. Install curl/tar/python3 manually and re-run."
-  run_privileged apt-get update
-  run_privileged env DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl tar python3
 fi
 
 if [[ ! -x "$DROPBOX_DAEMON" ]]; then
