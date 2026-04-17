@@ -37,6 +37,31 @@ run_privileged() {
   fi
 }
 
+is_valid_unix_username() {
+  local name="$1"
+  [[ "$name" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]
+}
+
+prompt_for_dropbox_user() {
+  local chosen
+  while true; do
+    chosen="$(prompt "DROPBOX_USER (linux username to run daemon)" "${DROPBOX_USER:-dropbox}")"
+    chosen="$(trim "$chosen")"
+
+    if [[ -z "$chosen" ]]; then
+      log "Username cannot be empty."
+      continue
+    fi
+    if ! is_valid_unix_username "$chosen"; then
+      log "Invalid username '$chosen'. Use lowercase letters, digits, '_' or '-', and start with a letter or '_'."
+      continue
+    fi
+
+    DROPBOX_USER="$chosen"
+    return 0
+  done
+}
+
 reexec_as_dropbox_user() {
   if [[ "${EUID}" -ne 0 ]]; then
     return 0
@@ -46,9 +71,20 @@ reexec_as_dropbox_user() {
   fi
 
   local dropbox_user="${DROPBOX_USER:-dropbox}"
-  local dropbox_home="/home/$dropbox_user"
+  local dropbox_home
   local script_source
   local script_target
+
+  if ! is_valid_unix_username "$dropbox_user"; then
+    error "Invalid DROPBOX_USER '$dropbox_user'."
+  fi
+
+  if id -u "$dropbox_user" >/dev/null 2>&1; then
+    dropbox_home="$(getent passwd "$dropbox_user" | cut -d: -f6)"
+    dropbox_home="${dropbox_home:-/home/$dropbox_user}"
+  else
+    dropbox_home="/home/$dropbox_user"
+  fi
 
   script_source="$(readlink -f "$0" 2>/dev/null || printf '%s' "$0")"
   if ! id -u "$dropbox_user" >/dev/null 2>&1; then
@@ -319,6 +355,7 @@ if [[ "${EUID}" -eq 0 && "${ONLYDROPBOX_AS_USER:-}" != "1" ]]; then
     python3 \
     procps
 
+  prompt_for_dropbox_user
   reexec_as_dropbox_user
 fi
 
