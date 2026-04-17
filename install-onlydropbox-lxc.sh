@@ -249,7 +249,19 @@ EOF
   fi
 }
 
+extract_link_url() {
+  local input="${1:-}"
+  printf '%s\n' "$input" | grep -Eo 'https://[^[:space:]]*cli_link_nonce[^[:space:]]*' | head -n 1 || true
+}
+
+is_link_required_status() {
+  local status="${1:-}"
+  [[ "$status" == *"not linked"* || "$status" == *"This computer isn't linked"* || "$status" == *"isn't linked to any Dropbox account"* || "$status" == *"/cli_link_nonce"* ]]
+}
+
 start_dropbox_daemon() {
+  local status
+
   if pgrep -f "$DROPBOX_DAEMON" >/dev/null 2>&1; then
     log "Dropbox daemon is already running."
     return 0
@@ -261,6 +273,12 @@ start_dropbox_daemon() {
 
   if pgrep -f "$DROPBOX_DAEMON" >/dev/null 2>&1; then
     log "Dropbox daemon started."
+    return 0
+  fi
+
+  status="$("$DROPBOX_CLI" status 2>&1 || true)"
+  if [[ "$status" == *"Starting..."* || "$status" == *"Up to date"* || "$status" == *"Syncing"* || "$status" == *"Connecting"* || "$status" == *"Downloading"* || "$status" == *"Indexing"* ]] || is_link_required_status "$status"; then
+    log "Dropbox appears to be running (status check): ${status//$'\n'/ }"
     return 0
   fi
 
@@ -394,12 +412,24 @@ fi
 start_dropbox_daemon
 
 status_out="$("$DROPBOX_CLI" status 2>&1 || true)"
-if [[ "$status_out" == *"not linked"* || "$status_out" == *"This computer isn't linked"* || "$status_out" == *"isn't linked to any Dropbox account"* || "$status_out" == *"Please visit "*"/cli_link_nonce"* ]]; then
+if is_link_required_status "$status_out"; then
+  link_url="$(extract_link_url "$status_out")"
   cat <<EOF
 
 Dropbox is not linked yet.
+EOF
+  if [[ -n "${link_url:-}" ]]; then
+    cat <<EOF
+Open this pairing URL:
+  $link_url
+EOF
+  else
+    cat <<EOF
 Run this command to get the pairing URL:
   $DROPBOX_CLI start -i
+EOF
+  fi
+  cat <<EOF
 
 After linking completes, re-run this installer to apply selective sync using:
   PREFIX_PATH=$PREFIX_PATH
