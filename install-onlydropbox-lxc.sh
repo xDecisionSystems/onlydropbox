@@ -99,17 +99,33 @@ wait_for_dropbox_ready() {
   local max_wait=300
   local elapsed=0
   local status
+  local last_status=""
+  local last_reported=-1
 
   log "Waiting for Dropbox daemon to initialize..."
   while (( elapsed < max_wait )); do
-    if status="$("$DROPBOX_CLI" status 2>/dev/null || true)"; then
-      case "$status" in
-        *"Up to date"*|*"Syncing"*|*"Connecting"*|*"Downloading"*|*"Indexing"*)
-          log "Dropbox is responding: $status"
-          return 0
-          ;;
-      esac
+    status="$("$DROPBOX_CLI" status 2>/dev/null || true)"
+
+    case "$status" in
+      *"Up to date"*|*"Syncing"*|*"Connecting"*|*"Downloading"*|*"Indexing"*)
+        log "Dropbox is responding: $status"
+        return 0
+        ;;
+      *"not linked"*|*"This computer isn't linked"*|*"isn't linked to any Dropbox account"*|*"Please visit "*"/cli_link_nonce"*)
+        log "Dropbox requires account linking before continuing."
+        return 10
+        ;;
+    esac
+
+    if [[ "$status" != "$last_status" ]]; then
+      log "Dropbox status: ${status:-<empty>}"
+      last_status="$status"
+      last_reported=$elapsed
+    elif (( elapsed - last_reported >= 10 )); then
+      log "Still waiting... (${elapsed}s elapsed, status: ${status:-<empty>})"
+      last_reported=$elapsed
     fi
+
     sleep 2
     elapsed=$((elapsed + 2))
   done
@@ -241,7 +257,7 @@ else
 fi
 
 status_out="$("$DROPBOX_CLI" status 2>&1 || true)"
-if [[ "$status_out" == *"not linked"* || "$status_out" == *"This computer isn't linked"* ]]; then
+if [[ "$status_out" == *"not linked"* || "$status_out" == *"This computer isn't linked"* || "$status_out" == *"isn't linked to any Dropbox account"* || "$status_out" == *"Please visit "*"/cli_link_nonce"* ]]; then
   cat <<EOF
 
 Dropbox is not linked yet.
@@ -258,6 +274,21 @@ fi
 
 if wait_for_dropbox_ready; then
   configure_selective_sync
+else
+  wait_rc=$?
+  if [[ "$wait_rc" -eq 10 ]]; then
+    cat <<EOF
+
+Dropbox needs linking before selective sync can be applied.
+Run:
+  $DROPBOX_CLI start -i
+
+After linking completes, re-run this installer.
+
+EOF
+    exit 0
+  fi
+  error "Dropbox daemon did not become ready. Check /tmp/onlydropbox-dropboxd.log and run '$DROPBOX_CLI status'."
 fi
 
 cat <<EOF
