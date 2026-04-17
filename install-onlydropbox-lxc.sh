@@ -307,36 +307,17 @@ if ! command -v apt-get >/dev/null 2>&1; then
 fi
 
 if [[ "${EUID}" -eq 0 && "${ONLYDROPBOX_AS_USER:-}" != "1" ]]; then
-  log "Installing required packages (curl + runtime dependencies)."
+  log "Installing minimal baseline packages."
   run_privileged apt-get update
   run_privileged env DEBIAN_FRONTEND=noninteractive apt-get install -y \
-    libasound2 \
-    libatk-bridge2.0-0 \
-    libatk1.0-0 \
-    libcairo2 \
     ca-certificates \
     curl \
     libatomic1 \
-    libdbus-1-3 \
     libglib2.0-0 \
-    libgtk-3-0 \
-    libnotify4 \
-    libnspr4 \
-    libnss3 \
-    libpango-1.0-0 \
     libstdc++6 \
-    libx11-6 \
-    libxext6 \
-    libxfixes3 \
-    libxi6 \
-    libxrandr2 \
-    libxrender1 \
-    libxss1 \
-    libxtst6 \
     tar \
     python3 \
-    procps \
-    xdg-utils
+    procps
 
   reexec_as_dropbox_user
 fi
