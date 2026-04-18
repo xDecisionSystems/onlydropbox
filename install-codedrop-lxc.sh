@@ -143,7 +143,7 @@ download_update_script_as_user() {
 
 install_code_server_as_user() {
   if run_as_local_user_shell "$LOCAL_USER" "command -v code-server >/dev/null 2>&1"; then
-    log "code-server is already installed for user '$LOCAL_USER'."
+    log "code-server is already installed system-wide."
     return 0
   fi
 
@@ -152,7 +152,7 @@ install_code_server_as_user() {
   fi
 
   # The upstream installer needs root for dpkg; run it as root to avoid nested su prompts.
-  log "Installing code-server system-wide (usable by user '$LOCAL_USER')."
+  log "Installing code-server system-wide."
   run_privileged sh -c 'curl -fsSL https://code-server.dev/install.sh | sh'
 }
 
@@ -997,7 +997,7 @@ Run this command to get the pairing URL:
 EOF
     fi
     cat <<EOF
-SCRIPT_MARKER: code-server-user
+SCRIPT_MARKER: tailscale
 
 After linking completes, re-run this installer to apply selective sync using:
   PREFIX_PATH=$PREFIX_PATH
@@ -1014,7 +1014,7 @@ EOF
     wait_rc=$?
     if [[ "$wait_rc" -eq 10 ]]; then
       cat <<EOF
-SCRIPT_MARKER: code-server-user
+SCRIPT_MARKER: tailscale
 
 Dropbox needs linking before selective sync can be applied.
 Run:
@@ -1049,7 +1049,7 @@ if [[ "${EUID}" -ne 0 ]]; then
 fi
 
 INSTALL_DROPBOX="${INSTALL_DROPBOX:-n}"
-printf 'SCRIPT_MARKER: code-server-user\n'
+printf 'SCRIPT_MARKER: tailscale\n'
 if prompt_yes_no "Install/keep Dropbox (headless daemon + selective sync)?" "${INSTALL_DROPBOX}"; then
   INSTALL_DROPBOX="y"
 else
@@ -1155,7 +1155,7 @@ if prompt_yes_no "Install Codex extension in code-server for user '$LOCAL_USER'?
   INSTALL_CODEX_EXTENSION="y"
 fi
 if [[ "$INSTALL_CODEX_EXTENSION" == "y" ]]; then
-  CODEX_EXTENSION_ID="$(prompt "CODEX_EXTENSION_ID (VS Code extension id, e.g. publisher.extension)" "${CODEX_EXTENSION_ID:-openai.chatgpt}")"
+  CODEX_EXTENSION_ID="$(prompt "CODEX_EXTENSION_ID" "${CODEX_EXTENSION_ID:-openai.chatgpt}")"
   CODEX_EXTENSION_ID="$(trim "$CODEX_EXTENSION_ID")"
   install_codex_extension_as_user
 else
@@ -1176,7 +1176,7 @@ download_update_script_as_user
 
 if [[ "$INSTALL_DROPBOX" == "y" ]]; then
   cat <<EOF
-SCRIPT_MARKER: code-server-user
+SCRIPT_MARKER: tailscale
 
 Install complete (headless Dropbox, no Docker).
 
@@ -1198,10 +1198,13 @@ Useful commands:
   $DROPBOX_CLI stop
   $HOME_DIR/.local/bin/update-codedrop-sync-lxc.sh
 
+If you installed Tailscale, bring it online with:
+  tailscale up
+
 EOF
 else
   cat <<EOF
-SCRIPT_MARKER: code-server-user
+SCRIPT_MARKER: tailscale
 
 Install complete.
 
@@ -1209,6 +1212,9 @@ Dropbox installation was skipped by choice.
 Re-run this installer any time and answer "yes" to install Dropbox later.
 Update helper script is available at:
   $HOME_DIR/.local/bin/update-codedrop-sync-lxc.sh
+
+If you installed Tailscale, bring it online with:
+  tailscale up
 
 EOF
 fi
