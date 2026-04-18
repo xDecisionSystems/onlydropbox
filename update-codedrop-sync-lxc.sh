@@ -10,6 +10,83 @@ error() {
   exit 1
 }
 
+reexec_as_dropbox_user_if_needed() {
+  if [[ "${EUID}" -ne 0 ]]; then
+    return 0
+  fi
+  if [[ "${CODEDROP_SYNC_AS_USER:-}" == "1" ]]; then
+    return 0
+  fi
+
+  local target_user=""
+  local target_home=""
+  local script_source
+  local script_target
+  local candidates=()
+  local passwd_user
+  local passwd_home
+
+  if [[ -n "${DROPBOX_USER:-}" ]]; then
+    if ! id -u "$DROPBOX_USER" >/dev/null 2>&1; then
+      error "DROPBOX_USER '$DROPBOX_USER' does not exist."
+    fi
+    target_user="$DROPBOX_USER"
+  else
+    while IFS=: read -r passwd_user _ _ _ _ passwd_home _; do
+      [[ -z "$passwd_user" || -z "$passwd_home" ]] && continue
+      if [[ -f "$passwd_home/.config/codedrop/codedrop.env" || -x "$passwd_home/.local/bin/dropbox" || -x "$passwd_home/.dropbox-dist/dropboxd" ]]; then
+        candidates+=("$passwd_user")
+      fi
+    done < /etc/passwd
+
+    if [[ "${#candidates[@]}" -eq 1 ]]; then
+      target_user="${candidates[0]}"
+    elif [[ "${#candidates[@]}" -eq 0 ]]; then
+      error "Could not detect Dropbox user automatically. Re-run as the Dropbox user or set DROPBOX_USER=<user>."
+    else
+      error "Multiple Dropbox users detected (${candidates[*]}). Re-run with DROPBOX_USER=<user>."
+    fi
+  fi
+
+  target_user="$(prompt "Dropbox user to run as" "$target_user")"
+  target_user="$(trim "$target_user")"
+  if [[ -z "$target_user" ]]; then
+    error "Dropbox user cannot be empty."
+  fi
+  if ! id -u "$target_user" >/dev/null 2>&1; then
+    error "Dropbox user '$target_user' does not exist."
+  fi
+
+  target_home="$(getent passwd "$target_user" | cut -d: -f6)"
+  target_home="${target_home:-/home/$target_user}"
+  script_source="$(readlink -f "$0" 2>/dev/null || printf '%s' "$0")"
+  script_target="$script_source"
+
+  if command -v runuser >/dev/null 2>&1; then
+    if ! runuser -u "$target_user" -- test -r "$script_target" >/dev/null 2>&1; then
+      script_target="/tmp/update-codedrop-sync-lxc.sh"
+      cp "$script_source" "$script_target"
+      chown "$target_user":"$target_user" "$script_target"
+      chmod 755 "$script_target"
+    fi
+
+    log "Re-running as Dropbox user '$target_user'."
+    exec runuser -u "$target_user" -- env \
+      CODEDROP_SYNC_AS_USER=1 \
+      DROPBOX_USER="$target_user" \
+      HOME="$target_home" \
+      LC_ALL=C \
+      bash "$script_target"
+  fi
+
+  if command -v su >/dev/null 2>&1; then
+    log "Re-running as Dropbox user '$target_user' via su."
+    exec su - "$target_user" -c "CODEDROP_SYNC_AS_USER=1 DROPBOX_USER='$target_user' LC_ALL=C bash '$script_target'"
+  fi
+
+  error "Unable to switch user automatically (runuser/su not available)."
+}
+
 prompt() {
   local label="$1"
   local default_value="${2:-}"
@@ -216,9 +293,7 @@ configure_selective_sync() {
   log "Selective sync configuration finished."
 }
 
-if [[ "${EUID}" -eq 0 ]]; then
-  error "Run this script as your Dropbox user, not root."
-fi
+reexec_as_dropbox_user_if_needed
 
 HOME_DIR="${HOME:-/root}"
 CONFIG_DIR="$HOME_DIR/.config/codedrop"
