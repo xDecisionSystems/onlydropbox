@@ -634,24 +634,6 @@ wait_for_dropbox_ready() {
   return 1
 }
 
-wait_for_dropbox_up_to_date() {
-  local max_wait=300
-  local elapsed=0
-  local status
-
-  while (( elapsed < max_wait )); do
-    status="$(run_dropbox_cli status 2>/dev/null || true)"
-    case "$status" in
-      *"Up to date"*) return 0 ;;
-      *"not linked"*|*"This computer isn't linked"*|*"isn't linked to any Dropbox account"*|*"Please visit "*"/cli_link_nonce"*) return 10 ;;
-    esac
-    sleep 2
-    elapsed=$((elapsed + 2))
-  done
-
-  return 1
-}
-
 tail_daemon_log() {
   local log_file="/tmp/codedrop-dropboxd.log"
   if [[ -f "$log_file" ]]; then
@@ -1016,7 +998,7 @@ Run this command to get the pairing URL:
 EOF
     fi
     cat <<EOF
-SCRIPT_MARKER: skiing
+SCRIPT_MARKER: gear
 
 After linking completes, re-run this installer to apply selective sync using:
   PREFIX_PATH=$PREFIX_PATH
@@ -1033,7 +1015,7 @@ EOF
     wait_rc=$?
     if [[ "$wait_rc" -eq 10 ]]; then
       cat <<EOF
-SCRIPT_MARKER: skiing
+SCRIPT_MARKER: gear
 
 Dropbox needs linking before selective sync can be applied.
 Run:
@@ -1057,21 +1039,7 @@ EOF
   fi
   write_env_config
   log "Saved early selective sync config to $ENV_FILE"
-
-  if wait_for_dropbox_up_to_date; then
-    if configure_selective_sync; then
-      write_env_config
-      log "Saved effective config to $ENV_FILE"
-    else
-      error "Final selective sync verification failed. Verify PREFIX_PATH with '$DROPBOX_CLI ls \"$PREFIX_PATH_NORMALIZED\"', then rerun."
-    fi
-  else
-    wait_rc=$?
-    if [[ "$wait_rc" -eq 10 ]]; then
-      error "Dropbox became unlinked before final selective sync verification."
-    fi
-    error "Dropbox did not reach 'Up to date' in time for final selective sync verification."
-  fi
+  log "Skipping final wait/verification. You can run update-codedrop-sync-lxc.sh later if needed."
 }
 
 if ! command -v apt-get >/dev/null 2>&1; then
@@ -1082,7 +1050,7 @@ if [[ "${EUID}" -ne 0 ]]; then
 fi
 
 INSTALL_DROPBOX="${INSTALL_DROPBOX:-n}"
-printf 'SCRIPT_MARKER: skiing\n'
+printf 'SCRIPT_MARKER: gear\n'
 if prompt_yes_no "Install Dropbox (headless daemon + selective sync)?" "${INSTALL_DROPBOX}"; then
   INSTALL_DROPBOX="y"
 else
@@ -1212,7 +1180,7 @@ download_update_script_as_user
 
 if [[ "$INSTALL_DROPBOX" == "y" ]]; then
   cat <<EOF
-SCRIPT_MARKER: skiing
+SCRIPT_MARKER: gear
 
 Install complete (headless Dropbox, no Docker).
 
@@ -1237,7 +1205,7 @@ Useful commands:
 EOF
 else
   cat <<EOF
-SCRIPT_MARKER: skiing
+SCRIPT_MARKER: gear
 
 Install complete.
 
