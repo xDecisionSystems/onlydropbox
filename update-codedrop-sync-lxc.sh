@@ -297,7 +297,7 @@ start_dropbox_daemon() {
 }
 
 wait_for_dropbox_ready() {
-  local max_wait=120
+  local max_wait=300
   local elapsed=0
   local status
 
@@ -305,8 +305,10 @@ wait_for_dropbox_ready() {
     status="$("$DROPBOX_CLI" status 2>/dev/null || true)"
 
     case "$status" in
-      *"Up to date"*|*"Syncing"*|*"Connecting"*|*"Downloading"*|*"Indexing"*)
+      *"Up to date"*|*"Syncing"*)
         return 0
+        ;;
+      *"Connecting"*|*"Downloading"*|*"Indexing"*|*"Starting"*)
         ;;
     esac
 
@@ -349,6 +351,7 @@ configure_selective_sync() {
   local exclude_line
   local exclude_item
   local exclude_output
+  local action_failures=0
 
   prefix_leaf="${PREFIX_PATH_NORMALIZED##*/}"
 
@@ -413,10 +416,16 @@ configure_selective_sync() {
 
       if is_allowed "$rel_path"; then
         log "Including ${full_path}"
-        "$DROPBOX_CLI" exclude remove "${full_path}" >/dev/null 2>&1 || true
+        if ! "$DROPBOX_CLI" exclude remove "${full_path}" >/dev/null 2>&1; then
+          log "Failed to include ${full_path} (dropbox exclude remove)."
+          action_failures=$((action_failures + 1))
+        fi
       else
         log "Excluding ${full_path}"
-        "$DROPBOX_CLI" exclude add "${full_path}" >/dev/null 2>&1 || true
+        if ! "$DROPBOX_CLI" exclude add "${full_path}" >/dev/null 2>&1; then
+          log "Failed to exclude ${full_path} (dropbox exclude add)."
+          action_failures=$((action_failures + 1))
+        fi
       fi
 
       if is_ancestor_of_allowed "$rel_path"; then
@@ -427,7 +436,7 @@ configure_selective_sync() {
 
   if [[ "$saw_valid_entry" -eq 0 ]]; then
     log "No listable entries found under ${PREFIX_PATH_NORMALIZED}. Verify PREFIX_PATH with: $DROPBOX_CLI ls \"$PREFIX_PATH_NORMALIZED\""
-    return 0
+    return 2
   fi
 
   if exclude_output="$("$DROPBOX_CLI" exclude list 2>/dev/null || true)"; then
@@ -440,11 +449,18 @@ configure_selective_sync() {
         full_path="$(build_full_path "$normalized")"
         if [[ "$exclude_item" == "$full_path" || "$exclude_item" == "$full_path/"* ]]; then
           log "Including nested excluded path ${exclude_item}"
-          "$DROPBOX_CLI" exclude remove "$exclude_item" >/dev/null 2>&1 || true
+          if ! "$DROPBOX_CLI" exclude remove "$exclude_item" >/dev/null 2>&1; then
+            log "Failed to include nested excluded path ${exclude_item}."
+            action_failures=$((action_failures + 1))
+          fi
           break
         fi
       done
     done <<< "$exclude_output"
+  fi
+
+  if [[ "$action_failures" -gt 0 ]]; then
+    error "Selective sync encountered ${action_failures} Dropbox CLI command failure(s)."
   fi
 
   log "Selective sync configuration finished."
@@ -501,9 +517,11 @@ fi
 
 wait_rc=0
 if wait_for_dropbox_ready; then
-  configure_selective_sync
-  printf '\nUpdated selective sync with:\n  PREFIX_PATH=%s\n  SYNC_FOLDERS=%s\n\n' "$PREFIX_PATH" "$SYNC_FOLDERS"
-  exit 0
+  if configure_selective_sync; then
+    printf '\nUpdated selective sync with:\n  PREFIX_PATH=%s\n  SYNC_FOLDERS=%s\n\n' "$PREFIX_PATH" "$SYNC_FOLDERS"
+    exit 0
+  fi
+  error "Selective sync update failed. Verify PREFIX_PATH with '$DROPBOX_CLI ls \"$PREFIX_PATH_NORMALIZED\"', wait for Dropbox to finish startup, then rerun."
 else
   wait_rc=$?
 fi
