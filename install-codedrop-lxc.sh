@@ -59,6 +59,11 @@ run_privileged() {
 LOCAL_USER="${DROPBOX_USER:-${SUDO_USER:-${USER:-}}}"
 LOCAL_HOME="${HOME:-/root}"
 
+ensure_root_with_su() {
+  [[ "${EUID}" -ne 0 ]] && error "This installer must run as root."
+  command -v su >/dev/null 2>&1 || error "'su' is required for user-scoped execution."
+}
+
 resolve_user_home() {
   local user_name="$1"
   local home_dir=""
@@ -85,8 +90,7 @@ run_as_local_user() {
 
   [[ -z "$target_user" ]] && error "No local user configured for user-scoped command execution."
   [[ "$#" -eq 0 ]] && error "run_as_local_user requires a command."
-  [[ "${EUID}" -ne 0 ]] && error "This installer must run as root."
-  command -v su >/dev/null 2>&1 || error "'su' is required for user-scoped execution."
+  ensure_root_with_su
 
   local escaped_cmd
   printf -v escaped_cmd '%q ' "$@"
@@ -101,8 +105,7 @@ run_as_local_user_shell() {
   [[ "$#" -eq 0 ]] && error "run_as_local_user_shell requires a command string."
 
   local shell_cmd="$1"
-  [[ "${EUID}" -ne 0 ]] && error "This installer must run as root."
-  command -v su >/dev/null 2>&1 || error "'su' is required for user-scoped execution."
+  ensure_root_with_su
   su - "$target_user" -c "$shell_cmd"
 }
 
@@ -308,11 +311,10 @@ split_prefix_components() {
 
   EXISTING_ACCOUNT_ROOT=""
   EXISTING_ACCOUNT_NAME=""
-  EXISTING_ACCOUNT_SUBPATH=""
 
   [[ -z "$trimmed" ]] && return 0
 
-  IFS='/' read -r EXISTING_ACCOUNT_ROOT EXISTING_ACCOUNT_NAME EXISTING_ACCOUNT_SUBPATH <<< "$trimmed"
+  IFS='/' read -r EXISTING_ACCOUNT_ROOT EXISTING_ACCOUNT_NAME _ <<< "$trimmed"
 }
 
 prompt_for_prefix_path() {
@@ -323,7 +325,6 @@ prompt_for_prefix_path() {
   local account_root
   local account_name
   local account_name_default
-  local account_subpath
 
   split_prefix_components "$existing_prefix"
 
@@ -357,15 +358,7 @@ prompt_for_prefix_path() {
   account_name="$(trim "$account_name")"
   [[ -z "$account_name" ]] && error "ACCOUNT_NAME cannot be empty."
 
-  account_subpath="$(prompt "ACCOUNT_SUBPATH (optional path under account folder)" "${EXISTING_ACCOUNT_SUBPATH:-}")"
-  account_subpath="$(trim "$account_subpath")"
-  account_subpath="${account_subpath#/}"
-  account_subpath="${account_subpath%/}"
-
   PREFIX_PATH="$account_root/$account_name"
-  if [[ -n "$account_subpath" ]]; then
-    PREFIX_PATH="$PREFIX_PATH/$account_subpath"
-  fi
 
   while [[ "$PREFIX_PATH" == *"//"* ]]; do
     PREFIX_PATH="${PREFIX_PATH//\/\//\/}"
@@ -998,7 +991,7 @@ Run this command to get the pairing URL:
 EOF
     fi
     cat <<EOF
-SCRIPT_MARKER: gear
+SCRIPT_MARKER: salsa
 
 After linking completes, re-run this installer to apply selective sync using:
   PREFIX_PATH=$PREFIX_PATH
@@ -1015,7 +1008,7 @@ EOF
     wait_rc=$?
     if [[ "$wait_rc" -eq 10 ]]; then
       cat <<EOF
-SCRIPT_MARKER: gear
+SCRIPT_MARKER: salsa
 
 Dropbox needs linking before selective sync can be applied.
 Run:
@@ -1050,8 +1043,8 @@ if [[ "${EUID}" -ne 0 ]]; then
 fi
 
 INSTALL_DROPBOX="${INSTALL_DROPBOX:-n}"
-printf 'SCRIPT_MARKER: gear\n'
-if prompt_yes_no "Install Dropbox (headless daemon + selective sync)?" "${INSTALL_DROPBOX}"; then
+printf 'SCRIPT_MARKER: salsa\n'
+if prompt_yes_no "Install/keep Dropbox (headless daemon + selective sync)?" "${INSTALL_DROPBOX}"; then
   INSTALL_DROPBOX="y"
 else
   INSTALL_DROPBOX="n"
@@ -1180,7 +1173,7 @@ download_update_script_as_user
 
 if [[ "$INSTALL_DROPBOX" == "y" ]]; then
   cat <<EOF
-SCRIPT_MARKER: gear
+SCRIPT_MARKER: salsa
 
 Install complete (headless Dropbox, no Docker).
 
@@ -1205,7 +1198,7 @@ Useful commands:
 EOF
 else
   cat <<EOF
-SCRIPT_MARKER: gear
+SCRIPT_MARKER: salsa
 
 Install complete.
 
