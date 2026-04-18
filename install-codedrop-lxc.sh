@@ -976,7 +976,7 @@ if ! command -v apt-get >/dev/null 2>&1; then
 fi
 
 INSTALL_DROPBOX="${INSTALL_DROPBOX:-n}"
-printf 'SCRIPT_MARKER: salmas\n'
+printf 'SCRIPT_MARKER: flowers\n'
 if prompt_yes_no "Install Dropbox (headless daemon + selective sync)?" "${INSTALL_DROPBOX}"; then
   INSTALL_DROPBOX="y"
 else
@@ -1149,7 +1149,7 @@ Run this command to get the pairing URL:
 EOF
     fi
     cat <<EOF
-SCRIPT_MARKER: salmas
+SCRIPT_MARKER: flowers
 
 After linking completes, re-run this installer to apply selective sync using:
   PREFIX_PATH=$PREFIX_PATH
@@ -1173,7 +1173,7 @@ EOF
     wait_rc=$?
     if [[ "$wait_rc" -eq 10 ]]; then
       cat <<EOF
-SCRIPT_MARKER: salmas
+SCRIPT_MARKER: flowers
 
 Dropbox needs linking before selective sync can be applied.
 Run:
@@ -1193,7 +1193,7 @@ EOF
   fi
 
   cat <<EOF
-SCRIPT_MARKER: salmas
+SCRIPT_MARKER: flowers
 
 Install complete (headless Dropbox, no Docker).
 
@@ -1218,7 +1218,7 @@ Useful commands:
 EOF
 else
   cat <<EOF
-SCRIPT_MARKER: salmas
+SCRIPT_MARKER: flowers
 
 Install complete.
 

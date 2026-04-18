@@ -10,81 +10,93 @@ error() {
   exit 1
 }
 
-reexec_as_dropbox_user_if_needed() {
-  if [[ "${EUID}" -ne 0 ]]; then
-    return 0
-  fi
-  if [[ "${CODEDROP_SYNC_AS_USER:-}" == "1" ]]; then
+LOCAL_USER="${DROPBOX_USER:-${SUDO_USER:-${USER:-}}}"
+LOCAL_HOME="${HOME:-/root}"
+
+resolve_user_home() {
+  local user_name="$1"
+  local home_dir=""
+
+  if [[ -z "$user_name" ]]; then
+    printf '%s' "${HOME:-/root}"
     return 0
   fi
 
-  local target_user=""
-  local target_home=""
-  local script_source
-  local script_target
-  local candidates=()
-  local passwd_user
-  local passwd_home
+  if [[ "$user_name" == "$(id -un)" ]]; then
+    printf '%s' "${HOME:-/root}"
+    return 0
+  fi
 
-  if [[ -n "${DROPBOX_USER:-}" ]]; then
-    if ! id -u "$DROPBOX_USER" >/dev/null 2>&1; then
-      error "DROPBOX_USER '$DROPBOX_USER' does not exist."
+  if id -u "$user_name" >/dev/null 2>&1; then
+    home_dir="$(getent passwd "$user_name" | cut -d: -f6)"
+  fi
+  printf '%s' "${home_dir:-/home/$user_name}"
+}
+
+run_as_local_user() {
+  local target_user="${1:-$LOCAL_USER}"
+  shift || true
+
+  [[ -z "$target_user" ]] && error "No local user configured for user-scoped command execution."
+  [[ "$#" -eq 0 ]] && error "run_as_local_user requires a command."
+
+  if [[ "$(id -un)" == "$target_user" ]]; then
+    "$@"
+    return $?
+  fi
+
+  if [[ "${EUID}" -eq 0 ]]; then
+    if command -v runuser >/dev/null 2>&1; then
+      runuser -u "$target_user" -- "$@"
+      return $?
     fi
-    target_user="$DROPBOX_USER"
-  else
-    while IFS=: read -r passwd_user _ _ _ _ passwd_home _; do
-      [[ -z "$passwd_user" || -z "$passwd_home" ]] && continue
-      if [[ -f "$passwd_home/.config/codedrop/codedrop.env" || -x "$passwd_home/.local/bin/dropbox" || -x "$passwd_home/.dropbox-dist/dropboxd" ]]; then
-        candidates+=("$passwd_user")
-      fi
-    done < /etc/passwd
 
-    if [[ "${#candidates[@]}" -eq 1 ]]; then
-      target_user="${candidates[0]}"
-    elif [[ "${#candidates[@]}" -eq 0 ]]; then
-      error "Could not detect Dropbox user automatically. Re-run as the Dropbox user or set DROPBOX_USER=<user>."
+    local escaped_cmd
+    printf -v escaped_cmd '%q ' "$@"
+    escaped_cmd="${escaped_cmd% }"
+    su - "$target_user" -c "$escaped_cmd"
+    return $?
+  fi
+
+  error "Cannot run command as '$target_user' without root privileges."
+}
+
+run_as_local_user_shell() {
+  local target_user="${1:-$LOCAL_USER}"
+  shift || true
+  [[ -z "$target_user" ]] && error "No local user configured for user-scoped command execution."
+  [[ "$#" -eq 0 ]] && error "run_as_local_user_shell requires a command string."
+
+  local shell_cmd="$1"
+
+  if [[ "$(id -un)" == "$target_user" ]]; then
+    bash -lc "$shell_cmd"
+    return $?
+  fi
+
+  if [[ "${EUID}" -eq 0 ]]; then
+    if command -v runuser >/dev/null 2>&1; then
+      runuser -u "$target_user" -- bash -lc "$shell_cmd"
     else
-      error "Multiple Dropbox users detected (${candidates[*]}). Re-run with DROPBOX_USER=<user>."
+      su - "$target_user" -c "$shell_cmd"
     fi
+    return $?
   fi
 
-  target_user="$(prompt "Dropbox user to run as" "$target_user")"
-  target_user="$(trim "$target_user")"
-  if [[ -z "$target_user" ]]; then
-    error "Dropbox user cannot be empty."
-  fi
-  if ! id -u "$target_user" >/dev/null 2>&1; then
-    error "Dropbox user '$target_user' does not exist."
-  fi
+  error "Cannot run shell command as '$target_user' without root privileges."
+}
 
-  target_home="$(getent passwd "$target_user" | cut -d: -f6)"
-  target_home="${target_home:-/home/$target_user}"
-  script_source="$(readlink -f "$0" 2>/dev/null || printf '%s' "$0")"
-  script_target="$script_source"
+run_dropbox_cli() {
+  run_as_local_user "${DROPBOX_USER:-$LOCAL_USER}" "$DROPBOX_CLI" "$@"
+}
 
-  if command -v runuser >/dev/null 2>&1; then
-    if ! runuser -u "$target_user" -- test -r "$script_target" >/dev/null 2>&1; then
-      script_target="/tmp/update-codedrop-sync-lxc.sh"
-      cp "$script_source" "$script_target"
-      chown "$target_user":"$target_user" "$script_target"
-      chmod 755 "$script_target"
-    fi
-
-    log "Re-running as Dropbox user '$target_user'."
-    exec runuser -u "$target_user" -- env \
-      CODEDROP_SYNC_AS_USER=1 \
-      DROPBOX_USER="$target_user" \
-      HOME="$target_home" \
-      LC_ALL=C \
-      bash "$script_target"
-  fi
-
-  if command -v su >/dev/null 2>&1; then
-    log "Re-running as Dropbox user '$target_user' via su."
-    exec su - "$target_user" -c "CODEDROP_SYNC_AS_USER=1 DROPBOX_USER='$target_user' LC_ALL=C bash '$script_target'"
-  fi
-
-  error "Unable to switch user automatically (runuser/su not available)."
+refresh_runtime_paths() {
+  HOME_DIR="${LOCAL_HOME:-${HOME:-/root}}"
+  CONFIG_DIR="$HOME_DIR/.config/codedrop"
+  ENV_FILE="$CONFIG_DIR/codedrop.env"
+  DROPBOX_DIST_DIR="$HOME_DIR/.dropbox-dist"
+  DROPBOX_DAEMON="$DROPBOX_DIST_DIR/dropboxd"
+  DROPBOX_CLI="$HOME_DIR/.local/bin/dropbox"
 }
 
 prompt() {
@@ -118,6 +130,48 @@ read_config_value() {
 
   line="$(grep -E "^${key}=" "$file" 2>/dev/null | tail -n 1 || true)"
   printf '%s' "${line#*=}"
+}
+
+select_dropbox_user_for_root() {
+  local target_user=""
+  local candidates=()
+  local passwd_user
+  local passwd_home
+
+  if [[ -n "${DROPBOX_USER:-}" ]]; then
+    if ! id -u "$DROPBOX_USER" >/dev/null 2>&1; then
+      error "DROPBOX_USER '$DROPBOX_USER' does not exist."
+    fi
+    target_user="$DROPBOX_USER"
+  else
+    while IFS=: read -r passwd_user _ _ _ _ passwd_home _; do
+      [[ -z "$passwd_user" || -z "$passwd_home" ]] && continue
+      if [[ -f "$passwd_home/.config/codedrop/codedrop.env" || -x "$passwd_home/.local/bin/dropbox" || -x "$passwd_home/.dropbox-dist/dropboxd" ]]; then
+        candidates+=("$passwd_user")
+      fi
+    done < /etc/passwd
+
+    if [[ "${#candidates[@]}" -eq 1 ]]; then
+      target_user="${candidates[0]}"
+    elif [[ "${#candidates[@]}" -eq 0 ]]; then
+      target_user="${SUDO_USER:-}"
+      [[ -z "$target_user" ]] && error "Could not detect Dropbox user automatically. Set DROPBOX_USER=<user>."
+    else
+      target_user="${candidates[0]}"
+    fi
+  fi
+
+  target_user="$(prompt "Dropbox user for Dropbox commands" "$target_user")"
+  target_user="$(trim "$target_user")"
+  [[ -z "$target_user" ]] && error "Dropbox user cannot be empty."
+  if ! id -u "$target_user" >/dev/null 2>&1; then
+    error "Dropbox user '$target_user' does not exist."
+  fi
+
+  DROPBOX_USER="$target_user"
+  LOCAL_USER="$target_user"
+  LOCAL_HOME="$(resolve_user_home "$target_user")"
+  refresh_runtime_paths
 }
 
 split_prefix_components() {
@@ -245,7 +299,7 @@ path_has_listable_entries() {
   local normalized
 
   probe_trimmed="${probe_path#/}"
-  mapfile -t probe_entries < <("$DROPBOX_CLI" ls "$probe_path" 2>/dev/null || true)
+  mapfile -t probe_entries < <(run_dropbox_cli ls "$probe_path" 2>/dev/null || true)
   [[ "${#probe_entries[@]}" -eq 0 ]] && return 1
 
   for name in "${probe_entries[@]}"; do
@@ -311,20 +365,12 @@ run_exclude_cmd() {
   local rel_path
   local cmd_output
   local target_user
-  local escaped_cli
-  local escaped_rel
 
   rel_path="${sync_path#/}"
   RUN_EXCLUDE_LAST_ERROR=""
   target_user="${DROPBOX_USER:-$USER}"
   log "Running command: su - $target_user -c '$DROPBOX_CLI exclude $mode \"$rel_path\"'"
-  printf -v escaped_cli '%q' "$DROPBOX_CLI"
-  printf -v escaped_rel '%q' "$rel_path"
-  cmd_output="$(su - "$target_user" -c "$escaped_cli exclude $mode $escaped_rel" 2>&1 || true)"
-  if [[ -z "$cmd_output" && "$(id -un)" == "$target_user" ]]; then
-    # Fallback when su-to-self is restricted but we are already the target user.
-    cmd_output="$("$DROPBOX_CLI" exclude "$mode" "$rel_path" 2>&1 || true)"
-  fi
+  cmd_output="$(run_dropbox_cli exclude "$mode" "$rel_path" 2>&1 || true)"
   RUN_EXCLUDE_LAST_ERROR="$cmd_output"
   if [[ -n "$cmd_output" ]]; then
     if [[ "$cmd_output" == *"Excluded:"* || "$cmd_output" == *"Included:"* ]]; then
@@ -350,7 +396,7 @@ exclude_list_normalized() {
     norm="${norm#/}"
     [[ -z "$norm" ]] && continue
     printf '%s\n' "$norm"
-  done < <("$DROPBOX_CLI" exclude list 2>/dev/null || true)
+  done < <(run_dropbox_cli exclude list 2>/dev/null || true)
 }
 
 is_path_excluded() {
@@ -425,14 +471,14 @@ start_dropbox_daemon() {
   fi
 
   log "Starting Dropbox daemon in background."
-  nohup "$DROPBOX_DAEMON" >/tmp/codedrop-dropboxd.log 2>&1 &
+  run_as_local_user_shell "${DROPBOX_USER:-$LOCAL_USER}" "nohup $(printf '%q' "$DROPBOX_DAEMON") >/tmp/codedrop-dropboxd.log 2>&1 &"
   sleep 3
 
   if pgrep -f "$DROPBOX_DAEMON" >/dev/null 2>&1; then
     return 0
   fi
 
-  status="$("$DROPBOX_CLI" status 2>&1 || true)"
+  status="$(run_dropbox_cli status 2>&1 || true)"
   if [[ "$status" == *"Starting..."* || "$status" == *"Up to date"* || "$status" == *"Syncing"* || "$status" == *"Connecting"* || "$status" == *"Downloading"* || "$status" == *"Indexing"* ]] || is_link_required_status "$status"; then
     return 0
   fi
@@ -446,7 +492,7 @@ wait_for_dropbox_ready() {
   local status
 
   while (( elapsed < max_wait )); do
-    status="$("$DROPBOX_CLI" status 2>/dev/null || true)"
+    status="$(run_dropbox_cli status 2>/dev/null || true)"
 
     case "$status" in
       *"Up to date"*|*"Syncing"*)
@@ -541,7 +587,7 @@ configure_selective_sync() {
     fi
     current_trimmed="${current_full#/}"
 
-    mapfile -t remote_entries < <("$DROPBOX_CLI" ls "$current_full" 2>/dev/null || true)
+    mapfile -t remote_entries < <(run_dropbox_cli ls "$current_full" 2>/dev/null || true)
     if [[ "${#remote_entries[@]}" -eq 0 ]]; then
       continue
     fi
@@ -614,7 +660,7 @@ configure_selective_sync() {
     return 2
   fi
 
-  if exclude_output="$("$DROPBOX_CLI" exclude list 2>/dev/null || true)"; then
+  if exclude_output="$(run_dropbox_cli exclude list 2>/dev/null || true)"; then
     while IFS= read -r exclude_line; do
       exclude_item="$(trim "$exclude_line")"
       [[ "$exclude_item" != /* ]] && continue
@@ -641,26 +687,30 @@ configure_selective_sync() {
   log "Selective sync configuration finished."
 }
 
-reexec_as_dropbox_user_if_needed
+refresh_runtime_paths
 
-HOME_DIR="${HOME:-/root}"
-CONFIG_DIR="$HOME_DIR/.config/codedrop"
-ENV_FILE="$CONFIG_DIR/codedrop.env"
-DROPBOX_DIST_DIR="$HOME_DIR/.dropbox-dist"
-DROPBOX_DAEMON="$DROPBOX_DIST_DIR/dropboxd"
-DROPBOX_CLI="$HOME_DIR/.local/bin/dropbox"
+if [[ "${EUID}" -eq 0 ]]; then
+  select_dropbox_user_for_root
+  log "Running in root mode. User-scoped Dropbox commands will run as '$LOCAL_USER'."
+else
+  LOCAL_USER="$(id -un)"
+  LOCAL_HOME="${HOME:-$(resolve_user_home "$LOCAL_USER")}"
+  DROPBOX_USER="${DROPBOX_USER:-$LOCAL_USER}"
+  refresh_runtime_paths
+fi
 
 if [[ ! -x "$DROPBOX_CLI" ]]; then
   error "Dropbox CLI not found at $DROPBOX_CLI. Run the installer first."
 fi
 
 write_env_config() {
-  mkdir -p "$CONFIG_DIR"
-  cat > "$ENV_FILE" <<CONFIG
+  run_as_local_user_shell "$LOCAL_USER" "mkdir -p $(printf '%q' "$CONFIG_DIR")"
+  run_as_local_user_shell "$LOCAL_USER" "cat > $(printf '%q' "$ENV_FILE") <<'CONFIG'
 # Updated by update-codedrop-sync-lxc.sh on $(date '+%Y-%m-%d %H:%M:%S')
 PREFIX_PATH=$PREFIX_PATH
 SYNC_FOLDERS=$SYNC_FOLDERS
 CONFIG
+"
 }
 
 existing_prefix="/"
@@ -683,15 +733,15 @@ log "Saved config to $ENV_FILE"
 
 start_dropbox_daemon
 
-status_out="$("$DROPBOX_CLI" status 2>&1 || true)"
+status_out="$(run_dropbox_cli status 2>&1 || true)"
 if is_link_required_status "$status_out"; then
+  printf 'SCRIPT_MARKER: flowers\n'
   link_url="$(extract_link_url "$status_out")"
   if [[ -n "$link_url" ]]; then
     printf '\nDropbox is not linked. Open this URL:\n  %s\n\n' "$link_url"
   else
     printf '\nDropbox is not linked. Run:\n  %s start -i\n\n' "$DROPBOX_CLI"
   fi
-  printf 'SCRIPT_MARKER: meow\n'
   exit 0
 fi
 
@@ -700,7 +750,7 @@ if wait_for_dropbox_ready; then
   if configure_selective_sync; then
     write_env_config
     log "Saved effective config to $ENV_FILE"
-    printf '\nUpdated selective sync with:\n  PREFIX_PATH=%s\n  SYNC_FOLDERS=%s\n\nSCRIPT_MARKER: meow\n\n' "$PREFIX_PATH" "$SYNC_FOLDERS"
+    printf 'SCRIPT_MARKER: flowers\n\nUpdated selective sync with:\n  PREFIX_PATH=%s\n  SYNC_FOLDERS=%s\n\n' "$PREFIX_PATH" "$SYNC_FOLDERS"
     exit 0
   fi
   error "Selective sync update failed. Verify PREFIX_PATH with '$DROPBOX_CLI ls \"$PREFIX_PATH_NORMALIZED\"', wait for Dropbox to finish startup, then rerun."
@@ -709,7 +759,7 @@ else
 fi
 
 if [[ "$wait_rc" -eq 10 ]]; then
-  printf '\nDropbox needs account linking before selective sync can be applied.\nRun:\n  %s start -i\n\nSCRIPT_MARKER: meow\n\n' "$DROPBOX_CLI"
+  printf 'SCRIPT_MARKER: flowers\n\nDropbox needs account linking before selective sync can be applied.\nRun:\n  %s start -i\n\n' "$DROPBOX_CLI"
   exit 0
 fi
 
