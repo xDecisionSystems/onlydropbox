@@ -309,22 +309,13 @@ run_exclude_cmd() {
   local mode="$1"
   local sync_path="$2"
   local rel_path
-  local local_abs
-  local try_path
   local cmd_output
 
   rel_path="${sync_path#/}"
-  local_abs="$HOME_DIR/$rel_path"
-  while [[ "$local_abs" == *"//"* ]]; do
-    local_abs="${local_abs//\/\//\/}"
-  done
-
-  for try_path in "$sync_path" "$rel_path" "$local_abs"; do
-    cmd_output="$("$DROPBOX_CLI" exclude "$mode" "$try_path" 2>&1)" && return 0
-    if [[ "$cmd_output" == *"already ignored"* || "$cmd_output" == *"isn't currently ignored"* || "$cmd_output" == *"not currently ignored"* ]]; then
-      return 0
-    fi
-  done
+  cmd_output="$("$DROPBOX_CLI" exclude "$mode" "$rel_path" 2>&1)" && return 0
+  if [[ "$cmd_output" == *"already ignored"* || "$cmd_output" == *"isn't currently ignored"* || "$cmd_output" == *"not currently ignored"* ]]; then
+    return 0
+  fi
 
   return 1
 }
@@ -608,7 +599,7 @@ configure_selective_sync() {
 
   final_exclude_output="$("$DROPBOX_CLI" exclude list 2>/dev/null || true)"
   if [[ "$exclude_attempts" -gt 0 && "$final_exclude_output" == *"No directories are being ignored."* ]]; then
-    error "Selective sync issued exclude operations, but Dropbox reports no excluded directories. Try again after indexing settles, and verify CLI path mode with: '$DROPBOX_CLI exclude add \"${PREFIX_PATH#/}\"'."
+    error "Selective sync issued exclude operations, but Dropbox reports no excluded directories. Verify with a relative path such as: '$DROPBOX_CLI exclude add \"${PREFIX_PATH#/}/Accounts\"'."
   fi
 
   log "Selective sync configuration finished."
