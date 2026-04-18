@@ -352,8 +352,10 @@ parse_sync_folders() {
     token="$(trim "$token")"
     [[ -z "$token" ]] && continue
     token="${token#/}"
-    token="${token%%/*}"
     token="${token%/}"
+    while [[ "$token" == *"//"* ]]; do
+      token="${token//\/\//\/}"
+    done
     [[ -z "$token" ]] && continue
     ALLOW+=("$token")
   done
@@ -363,7 +365,18 @@ is_allowed() {
   local candidate="$1"
   local allowed
   for allowed in "${ALLOW[@]:-}"; do
-    if [[ "$candidate" == "$allowed" ]]; then
+    if [[ "$candidate" == "$allowed" || "$allowed" == "$candidate/"* || "$candidate" == "$allowed/"* ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+is_ancestor_of_allowed() {
+  local candidate="$1"
+  local allowed
+  for allowed in "${ALLOW[@]:-}"; do
+    if [[ "$allowed" == "$candidate/"* ]]; then
       return 0
     fi
   done
@@ -490,32 +503,57 @@ configure_selective_sync() {
   log "Prefix path: ${PREFIX_PATH_NORMALIZED}"
   log "Allow-list from SYNC_FOLDERS: ${ALLOW[*]}"
 
-  mapfile -t remote_entries < <("$DROPBOX_CLI" ls "$PREFIX_PATH_NORMALIZED" 2>/dev/null || true)
-  if [[ "${#remote_entries[@]}" -eq 0 ]]; then
-    log "No remote entries found under ${PREFIX_PATH_NORMALIZED}. This can happen before account linking or initial listing."
-    return 0
-  fi
-
+  local -a queue=("")
+  local current_rel
+  local current_full
   local name
   local normalized
+  local rel_path
   local full_path
+  local -a remote_entries
   local exclude_line
   local exclude_item
   local exclude_output
 
-  for name in "${remote_entries[@]}"; do
-    normalized="${name%/}"
-    normalized="${normalized#/}"
-    [[ -z "$normalized" ]] && continue
-    full_path="$(build_full_path "$normalized")"
+  while [[ "${#queue[@]}" -gt 0 ]]; do
+    current_rel="${queue[0]}"
+    queue=("${queue[@]:1}")
 
-    if is_allowed "$normalized"; then
-      log "Including ${full_path}"
-      "$DROPBOX_CLI" exclude remove "${full_path}" >/dev/null 2>&1 || true
+    if [[ -z "$current_rel" ]]; then
+      current_full="$PREFIX_PATH_NORMALIZED"
     else
-      log "Excluding ${full_path}"
-      "$DROPBOX_CLI" exclude add "${full_path}" >/dev/null 2>&1 || true
+      current_full="$(build_full_path "$current_rel")"
     fi
+
+    mapfile -t remote_entries < <("$DROPBOX_CLI" ls "$current_full" 2>/dev/null || true)
+    if [[ "${#remote_entries[@]}" -eq 0 ]]; then
+      continue
+    fi
+
+    for name in "${remote_entries[@]}"; do
+      normalized="${name%/}"
+      normalized="${normalized#/}"
+      [[ -z "$normalized" ]] && continue
+
+      if [[ -z "$current_rel" ]]; then
+        rel_path="$normalized"
+      else
+        rel_path="$current_rel/$normalized"
+      fi
+      full_path="$(build_full_path "$rel_path")"
+
+      if is_allowed "$rel_path"; then
+        log "Including ${full_path}"
+        "$DROPBOX_CLI" exclude remove "${full_path}" >/dev/null 2>&1 || true
+      else
+        log "Excluding ${full_path}"
+        "$DROPBOX_CLI" exclude add "${full_path}" >/dev/null 2>&1 || true
+      fi
+
+      if is_ancestor_of_allowed "$rel_path"; then
+        queue+=("$rel_path")
+      fi
+    done
   done
 
   if exclude_output="$("$DROPBOX_CLI" exclude list 2>/dev/null || true)"; then
@@ -711,6 +749,9 @@ After linking completes, re-run this installer to apply selective sync using:
   PREFIX_PATH=$PREFIX_PATH
   SYNC_FOLDERS=$SYNC_FOLDERS
 
+Or apply selective sync directly with:
+  $HOME/.local/bin/update-codedrop-sync-lxc.sh
+
 EOF
     exit 0
   fi
@@ -727,6 +768,9 @@ Run:
   $DROPBOX_CLI start -i
 
 After linking completes, re-run this installer.
+
+Or apply selective sync directly with:
+  $HOME/.local/bin/update-codedrop-sync-lxc.sh
 
 EOF
       exit 0
@@ -756,6 +800,7 @@ Useful commands:
   $DROPBOX_CLI exclude list
   $DROPBOX_CLI start
   $DROPBOX_CLI stop
+  $HOME/.local/bin/update-codedrop-sync-lxc.sh
 
 EOF
 else
@@ -765,6 +810,8 @@ Install complete.
 
 Dropbox installation was skipped by choice.
 Re-run this installer any time and answer "yes" to install Dropbox later.
+Update helper script is available at:
+  $HOME/.local/bin/update-codedrop-sync-lxc.sh
 
 EOF
 fi

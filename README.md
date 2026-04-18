@@ -8,7 +8,7 @@ Codedrop provides two ways to run Dropbox with selective sync:
 Selective sync is controlled by:
 
 - `PREFIX_PATH`: base Dropbox path (default `/`)
-- `SYNC_FOLDERS`: comma-separated allow-list of first-level folder names under `PREFIX_PATH`
+- `SYNC_FOLDERS`: comma-separated allow-list of relative folder paths under `PREFIX_PATH` (nested paths supported)
 
 If `SYNC_FOLDERS` is empty, selective sync is left unchanged.
 
@@ -111,7 +111,7 @@ This script reads/writes:
 
 - LXC mode stores Dropbox state in the selected user home (example: `/home/dropbox/.dropbox`).
 - `PREFIX_PATH` can be `/`, `/Team`, or `Team/Clients`.
-- Folder names in `SYNC_FOLDERS` are first-level names within `PREFIX_PATH`; each selected folder syncs recursively.
+- Entries in `SYNC_FOLDERS` are relative paths within `PREFIX_PATH`; nested paths are supported and each selected path syncs recursively.
 - Spaces around commas are allowed.
 - Example for path `UCF Dropbox/Bob Jones/`:
   - `PREFIX_PATH="UCF Dropbox/Bob Jones"`
