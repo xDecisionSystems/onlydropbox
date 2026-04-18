@@ -200,12 +200,14 @@ install_claude_code_as_user() {
 }
 
 install_codex_extension_as_user() {
+  local codex_extension_id="openai.chatgpt"
+
   if ! run_as_local_user_shell "$LOCAL_USER" "command -v code-server >/dev/null 2>&1"; then
     error "code-server is required to install a Codex extension. Install code-server and re-run the installer."
   fi
 
-  log "Installing Codex extension '$CODEX_EXTENSION_ID' for user '$LOCAL_USER'."
-  run_as_local_user_shell "$LOCAL_USER" "code-server --install-extension $(printf '%q' "$CODEX_EXTENSION_ID")"
+  log "Installing Codex extension '$codex_extension_id' for user '$LOCAL_USER'."
+  run_as_local_user_shell "$LOCAL_USER" "code-server --install-extension $(printf '%q' "$codex_extension_id")"
 }
 
 install_python_extension_as_user() {
@@ -1155,8 +1157,6 @@ if prompt_yes_no "Install Codex extension in code-server for user '$LOCAL_USER'?
   INSTALL_CODEX_EXTENSION="y"
 fi
 if [[ "$INSTALL_CODEX_EXTENSION" == "y" ]]; then
-  CODEX_EXTENSION_ID="$(prompt "CODEX_EXTENSION_ID" "${CODEX_EXTENSION_ID:-openai.chatgpt}")"
-  CODEX_EXTENSION_ID="$(trim "$CODEX_EXTENSION_ID")"
   install_codex_extension_as_user
 else
   log "Skipping Codex extension installation."
