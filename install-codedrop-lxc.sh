@@ -506,6 +506,7 @@ configure_selective_sync() {
   local -a queue=("")
   local current_rel
   local current_full
+  local current_trimmed
   local name
   local normalized
   local rel_path
@@ -524,6 +525,7 @@ configure_selective_sync() {
     else
       current_full="$(build_full_path "$current_rel")"
     fi
+    current_trimmed="${current_full#/}"
 
     mapfile -t remote_entries < <("$DROPBOX_CLI" ls "$current_full" 2>/dev/null || true)
     if [[ "${#remote_entries[@]}" -eq 0 ]]; then
@@ -533,6 +535,13 @@ configure_selective_sync() {
     for name in "${remote_entries[@]}"; do
       normalized="${name%/}"
       normalized="${normalized#/}"
+      if [[ -n "$current_trimmed" && "$current_trimmed" != "/" ]]; then
+        if [[ "$normalized" == "$current_trimmed/"* ]]; then
+          normalized="${normalized#"$current_trimmed"/}"
+        elif [[ "$normalized" == "$current_trimmed" ]]; then
+          normalized=""
+        fi
+      fi
       [[ -z "$normalized" ]] && continue
 
       if [[ -z "$current_rel" ]]; then
