@@ -54,6 +54,14 @@ chmod +x install-codedrop-lxc.sh
 ./install-codedrop-lxc.sh
 ```
 
+Or download and run it directly:
+
+```bash
+wget -O install-codedrop-lxc.sh https://raw.githubusercontent.com/xDecisionSystems/codedrop/main/install-codedrop-lxc.sh
+chmod +x install-codedrop-lxc.sh
+./install-codedrop-lxc.sh
+```
+
 The installer is re-runnable and asks what to install each run.
 
 ### What It Can Install
