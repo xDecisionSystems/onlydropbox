@@ -39,26 +39,13 @@ run_as_local_user() {
 
   [[ -z "$target_user" ]] && error "No local user configured for user-scoped command execution."
   [[ "$#" -eq 0 ]] && error "run_as_local_user requires a command."
+  [[ "${EUID}" -ne 0 ]] && error "Run this updater as root."
+  command -v su >/dev/null 2>&1 || error "'su' is required for user-scoped execution."
 
-  if [[ "$(id -un)" == "$target_user" ]]; then
-    "$@"
-    return $?
-  fi
-
-  if [[ "${EUID}" -eq 0 ]]; then
-    if command -v runuser >/dev/null 2>&1; then
-      runuser -u "$target_user" -- "$@"
-      return $?
-    fi
-
-    local escaped_cmd
-    printf -v escaped_cmd '%q ' "$@"
-    escaped_cmd="${escaped_cmd% }"
-    su - "$target_user" -c "$escaped_cmd"
-    return $?
-  fi
-
-  error "Cannot run command as '$target_user' without root privileges."
+  local escaped_cmd
+  printf -v escaped_cmd '%q ' "$@"
+  escaped_cmd="${escaped_cmd% }"
+  su - "$target_user" -c "$escaped_cmd"
 }
 
 run_as_local_user_shell() {
@@ -68,22 +55,9 @@ run_as_local_user_shell() {
   [[ "$#" -eq 0 ]] && error "run_as_local_user_shell requires a command string."
 
   local shell_cmd="$1"
-
-  if [[ "$(id -un)" == "$target_user" ]]; then
-    bash -lc "$shell_cmd"
-    return $?
-  fi
-
-  if [[ "${EUID}" -eq 0 ]]; then
-    if command -v runuser >/dev/null 2>&1; then
-      runuser -u "$target_user" -- bash -lc "$shell_cmd"
-    else
-      su - "$target_user" -c "$shell_cmd"
-    fi
-    return $?
-  fi
-
-  error "Cannot run shell command as '$target_user' without root privileges."
+  [[ "${EUID}" -ne 0 ]] && error "Run this updater as root."
+  command -v su >/dev/null 2>&1 || error "'su' is required for user-scoped execution."
+  su - "$target_user" -c "$shell_cmd"
 }
 
 run_dropbox_cli() {
@@ -164,6 +138,7 @@ select_dropbox_user_for_root() {
   target_user="$(prompt "Dropbox user for Dropbox commands" "$target_user")"
   target_user="$(trim "$target_user")"
   [[ -z "$target_user" ]] && error "Dropbox user cannot be empty."
+  [[ "$target_user" == "root" ]] && error "Dropbox user cannot be root. Use your Dropbox/Linux user (for example: aev)."
   if ! id -u "$target_user" >/dev/null 2>&1; then
     error "Dropbox user '$target_user' does not exist."
   fi
@@ -689,15 +664,12 @@ configure_selective_sync() {
 
 refresh_runtime_paths
 
-if [[ "${EUID}" -eq 0 ]]; then
-  select_dropbox_user_for_root
-  log "Running in root mode. User-scoped Dropbox commands will run as '$LOCAL_USER'."
-else
-  LOCAL_USER="$(id -un)"
-  LOCAL_HOME="${HOME:-$(resolve_user_home "$LOCAL_USER")}"
-  DROPBOX_USER="${DROPBOX_USER:-$LOCAL_USER}"
-  refresh_runtime_paths
+if [[ "${EUID}" -ne 0 ]]; then
+  error "Run this updater as root."
 fi
+
+select_dropbox_user_for_root
+log "Running in root mode. User-scoped Dropbox commands will run as '$LOCAL_USER' via su."
 
 if [[ ! -x "$DROPBOX_CLI" ]]; then
   error "Dropbox CLI not found at $DROPBOX_CLI. Run the installer first."

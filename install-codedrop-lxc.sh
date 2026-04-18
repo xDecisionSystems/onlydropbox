@@ -85,26 +85,13 @@ run_as_local_user() {
 
   [[ -z "$target_user" ]] && error "No local user configured for user-scoped command execution."
   [[ "$#" -eq 0 ]] && error "run_as_local_user requires a command."
+  [[ "${EUID}" -ne 0 ]] && error "This installer must run as root."
+  command -v su >/dev/null 2>&1 || error "'su' is required for user-scoped execution."
 
-  if [[ "$(id -un)" == "$target_user" ]]; then
-    "$@"
-    return $?
-  fi
-
-  if [[ "${EUID}" -eq 0 ]]; then
-    if command -v runuser >/dev/null 2>&1; then
-      runuser -u "$target_user" -- "$@"
-      return $?
-    fi
-
-    local escaped_cmd
-    printf -v escaped_cmd '%q ' "$@"
-    escaped_cmd="${escaped_cmd% }"
-    su - "$target_user" -c "$escaped_cmd"
-    return $?
-  fi
-
-  error "Cannot run command as '$target_user' without root privileges."
+  local escaped_cmd
+  printf -v escaped_cmd '%q ' "$@"
+  escaped_cmd="${escaped_cmd% }"
+  su - "$target_user" -c "$escaped_cmd"
 }
 
 run_as_local_user_shell() {
@@ -114,22 +101,9 @@ run_as_local_user_shell() {
   [[ "$#" -eq 0 ]] && error "run_as_local_user_shell requires a command string."
 
   local shell_cmd="$1"
-
-  if [[ "$(id -un)" == "$target_user" ]]; then
-    bash -lc "$shell_cmd"
-    return $?
-  fi
-
-  if [[ "${EUID}" -eq 0 ]]; then
-    if command -v runuser >/dev/null 2>&1; then
-      runuser -u "$target_user" -- bash -lc "$shell_cmd"
-    else
-      su - "$target_user" -c "$shell_cmd"
-    fi
-    return $?
-  fi
-
-  error "Cannot run shell command as '$target_user' without root privileges."
+  [[ "${EUID}" -ne 0 ]] && error "This installer must run as root."
+  command -v su >/dev/null 2>&1 || error "'su' is required for user-scoped execution."
+  su - "$target_user" -c "$shell_cmd"
 }
 
 run_dropbox_cli() {
@@ -974,64 +948,68 @@ EOF
 if ! command -v apt-get >/dev/null 2>&1; then
   error "apt-get not found. This installer currently supports Debian/Ubuntu-based LXC containers."
 fi
+if [[ "${EUID}" -ne 0 ]]; then
+  error "Run this installer as root."
+fi
 
 INSTALL_DROPBOX="${INSTALL_DROPBOX:-n}"
-printf 'SCRIPT_MARKER: flowers\n'
+printf 'SCRIPT_MARKER: skiing\n'
 if prompt_yes_no "Install Dropbox (headless daemon + selective sync)?" "${INSTALL_DROPBOX}"; then
   INSTALL_DROPBOX="y"
 else
   INSTALL_DROPBOX="n"
 fi
 
-if [[ "${EUID}" -eq 0 ]]; then
-  log "Installing minimal baseline packages."
-  run_privileged apt-get update
+log "Installing minimal baseline packages."
+run_privileged apt-get update
+run_privileged env DEBIAN_FRONTEND=noninteractive apt-get install -y \
+  ca-certificates \
+  curl \
+  tar \
+  python3 \
+  procps
+
+if [[ "$INSTALL_DROPBOX" == "y" ]]; then
+  log "Installing Dropbox prerequisites."
   run_privileged env DEBIAN_FRONTEND=noninteractive apt-get install -y \
-    ca-certificates \
-    curl \
-    tar \
-    python3 \
-    procps
-
-  if [[ "$INSTALL_DROPBOX" == "y" ]]; then
-    log "Installing Dropbox prerequisites."
-    run_privileged env DEBIAN_FRONTEND=noninteractive apt-get install -y \
-      wget \
-      python3-gpg \
-      libatomic1 \
-      libglib2.0-0 \
-      libstdc++6
-  fi
-
-  if [[ "$INSTALL_DROPBOX" == "y" && -z "${DROPBOX_USER:-}" ]]; then
-    prompt_for_dropbox_user
-  fi
-
-  if [[ -n "${DROPBOX_USER:-}" ]]; then
-    LOCAL_USER="$DROPBOX_USER"
-  fi
-  if [[ -z "${LOCAL_USER:-}" || "$LOCAL_USER" == "root" ]]; then
-    LOCAL_USER="$(prompt "LOCAL_USER (linux username for user-scoped install steps)" "${SUDO_USER:-}")"
-    LOCAL_USER="$(trim "$LOCAL_USER")"
-    if [[ -z "$LOCAL_USER" ]]; then
-      error "LOCAL_USER cannot be empty when running installer as root."
-    fi
-  fi
-  if ! is_valid_unix_username "$LOCAL_USER"; then
-    error "Invalid LOCAL_USER '$LOCAL_USER'."
-  fi
-
-  if ! id -u "$LOCAL_USER" >/dev/null 2>&1; then
-    LOCAL_HOME="/home/$LOCAL_USER"
-    log "Creating user '$LOCAL_USER' for user-scoped install steps."
-    useradd -m -d "$LOCAL_HOME" -U -s /bin/bash "$LOCAL_USER"
-  fi
-
-  LOCAL_HOME="$(resolve_user_home "$LOCAL_USER")"
-  DROPBOX_USER="${DROPBOX_USER:-$LOCAL_USER}"
-  refresh_runtime_paths
-  log "Running in root mode. User-scoped commands will run as '$LOCAL_USER'."
+    wget \
+    python3-gpg \
+    libatomic1 \
+    libglib2.0-0 \
+    libstdc++6
 fi
+
+if [[ "$INSTALL_DROPBOX" == "y" && -z "${DROPBOX_USER:-}" ]]; then
+  prompt_for_dropbox_user
+fi
+
+if [[ -n "${DROPBOX_USER:-}" ]]; then
+  LOCAL_USER="$DROPBOX_USER"
+fi
+if [[ -z "${LOCAL_USER:-}" || "$LOCAL_USER" == "root" ]]; then
+  LOCAL_USER="$(prompt "LOCAL_USER (linux username for user-scoped install steps)" "${SUDO_USER:-}")"
+  LOCAL_USER="$(trim "$LOCAL_USER")"
+  if [[ -z "$LOCAL_USER" ]]; then
+    error "LOCAL_USER cannot be empty when running installer as root."
+  fi
+fi
+if ! is_valid_unix_username "$LOCAL_USER"; then
+  error "Invalid LOCAL_USER '$LOCAL_USER'."
+fi
+if [[ "$LOCAL_USER" == "root" ]]; then
+  error "LOCAL_USER cannot be root. Use your Dropbox/Linux user (for example: aev)."
+fi
+
+if ! id -u "$LOCAL_USER" >/dev/null 2>&1; then
+  LOCAL_HOME="/home/$LOCAL_USER"
+  log "Creating user '$LOCAL_USER' for user-scoped install steps."
+  useradd -m -d "$LOCAL_HOME" -U -s /bin/bash "$LOCAL_USER"
+fi
+
+LOCAL_HOME="$(resolve_user_home "$LOCAL_USER")"
+DROPBOX_USER="${DROPBOX_USER:-$LOCAL_USER}"
+refresh_runtime_paths
+log "Running in root mode. User-scoped commands will run as '$LOCAL_USER' via su."
 
 if [[ "$INSTALL_DROPBOX" == "y" ]]; then
   existing_prefix="/"
@@ -1149,7 +1127,7 @@ Run this command to get the pairing URL:
 EOF
     fi
     cat <<EOF
-SCRIPT_MARKER: flowers
+SCRIPT_MARKER: skiing
 
 After linking completes, re-run this installer to apply selective sync using:
   PREFIX_PATH=$PREFIX_PATH
@@ -1173,7 +1151,7 @@ EOF
     wait_rc=$?
     if [[ "$wait_rc" -eq 10 ]]; then
       cat <<EOF
-SCRIPT_MARKER: flowers
+SCRIPT_MARKER: skiing
 
 Dropbox needs linking before selective sync can be applied.
 Run:
@@ -1193,7 +1171,7 @@ EOF
   fi
 
   cat <<EOF
-SCRIPT_MARKER: flowers
+SCRIPT_MARKER: skiing
 
 Install complete (headless Dropbox, no Docker).
 
@@ -1218,7 +1196,7 @@ Useful commands:
 EOF
 else
   cat <<EOF
-SCRIPT_MARKER: flowers
+SCRIPT_MARKER: skiing
 
 Install complete.
 
