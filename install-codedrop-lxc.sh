@@ -976,6 +976,7 @@ if ! command -v apt-get >/dev/null 2>&1; then
 fi
 
 INSTALL_DROPBOX="${INSTALL_DROPBOX:-n}"
+printf 'SCRIPT_MARKER: salmas\n'
 if prompt_yes_no "Install Dropbox (headless daemon + selective sync)?" "${INSTALL_DROPBOX}"; then
   INSTALL_DROPBOX="y"
 else
