@@ -488,6 +488,28 @@ wait_for_dropbox_ready() {
   return 1
 }
 
+wait_for_dropbox_up_to_date() {
+  local max_wait=300
+  local elapsed=0
+  local status
+
+  while (( elapsed < max_wait )); do
+    status="$(run_dropbox_cli status 2>/dev/null || true)"
+    case "$status" in
+      *"Up to date"*) return 0 ;;
+    esac
+
+    if is_link_required_status "$status"; then
+      return 10
+    fi
+
+    sleep 2
+    elapsed=$((elapsed + 2))
+  done
+
+  return 1
+}
+
 configure_selective_sync() {
   parse_sync_folders
   normalize_prefix_path
@@ -707,7 +729,7 @@ start_dropbox_daemon
 
 status_out="$(run_dropbox_cli status 2>&1 || true)"
 if is_link_required_status "$status_out"; then
-  printf 'SCRIPT_MARKER: flowers\n'
+  printf 'SCRIPT_MARKER: skiing\n'
   link_url="$(extract_link_url "$status_out")"
   if [[ -n "$link_url" ]]; then
     printf '\nDropbox is not linked. Open this URL:\n  %s\n\n' "$link_url"
@@ -718,21 +740,33 @@ if is_link_required_status "$status_out"; then
 fi
 
 wait_rc=0
-if wait_for_dropbox_ready; then
-  if configure_selective_sync; then
-    write_env_config
-    log "Saved effective config to $ENV_FILE"
-    printf 'SCRIPT_MARKER: flowers\n\nUpdated selective sync with:\n  PREFIX_PATH=%s\n  SYNC_FOLDERS=%s\n\n' "$PREFIX_PATH" "$SYNC_FOLDERS"
+if ! wait_for_dropbox_ready; then
+  wait_rc=$?
+  if [[ "$wait_rc" -eq 10 ]]; then
+    printf 'SCRIPT_MARKER: skiing\n\nDropbox needs account linking before selective sync can be applied.\nRun:\n  %s start -i\n\n' "$DROPBOX_CLI"
     exit 0
   fi
-  error "Selective sync update failed. Verify PREFIX_PATH with '$DROPBOX_CLI ls \"$PREFIX_PATH_NORMALIZED\"', wait for Dropbox to finish startup, then rerun."
-else
+  error "Dropbox did not become ready. Check /tmp/codedrop-dropboxd.log and '$DROPBOX_CLI status'."
+fi
+
+if ! configure_selective_sync; then
+  error "Early selective sync update failed. Verify PREFIX_PATH with '$DROPBOX_CLI ls \"$PREFIX_PATH_NORMALIZED\"', then rerun."
+fi
+write_env_config
+log "Saved early selective sync config to $ENV_FILE"
+
+if ! wait_for_dropbox_up_to_date; then
   wait_rc=$?
+  if [[ "$wait_rc" -eq 10 ]]; then
+    error "Dropbox became unlinked before final selective sync verification."
+  fi
+  error "Dropbox did not reach 'Up to date' in time for final selective sync verification."
 fi
 
-if [[ "$wait_rc" -eq 10 ]]; then
-  printf 'SCRIPT_MARKER: flowers\n\nDropbox needs account linking before selective sync can be applied.\nRun:\n  %s start -i\n\n' "$DROPBOX_CLI"
-  exit 0
+if ! configure_selective_sync; then
+  error "Final selective sync verification failed. Verify PREFIX_PATH with '$DROPBOX_CLI ls \"$PREFIX_PATH_NORMALIZED\"', then rerun."
 fi
-
-error "Dropbox did not become ready. Check /tmp/codedrop-dropboxd.log and '$DROPBOX_CLI status'."
+write_env_config
+log "Saved effective config to $ENV_FILE"
+printf 'SCRIPT_MARKER: skiing\n\nUpdated selective sync with:\n  PREFIX_PATH=%s\n  SYNC_FOLDERS=%s\n\n' "$PREFIX_PATH" "$SYNC_FOLDERS"
+exit 0

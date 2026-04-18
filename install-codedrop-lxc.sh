@@ -634,6 +634,24 @@ wait_for_dropbox_ready() {
   return 1
 }
 
+wait_for_dropbox_up_to_date() {
+  local max_wait=300
+  local elapsed=0
+  local status
+
+  while (( elapsed < max_wait )); do
+    status="$(run_dropbox_cli status 2>/dev/null || true)"
+    case "$status" in
+      *"Up to date"*) return 0 ;;
+      *"not linked"*|*"This computer isn't linked"*|*"isn't linked to any Dropbox account"*|*"Please visit "*"/cli_link_nonce"*) return 10 ;;
+    esac
+    sleep 2
+    elapsed=$((elapsed + 2))
+  done
+
+  return 1
+}
+
 tail_daemon_log() {
   local log_file="/tmp/codedrop-dropboxd.log"
   if [[ -f "$log_file" ]]; then
@@ -945,6 +963,117 @@ EOF
 "
 }
 
+install_and_configure_dropbox() {
+  local arch
+  local tmp_tar
+  local status_out
+  local link_url
+  local wait_rc
+
+  run_as_local_user_shell "$LOCAL_USER" "mkdir -p $(printf '%q' "$CONFIG_DIR") $(printf '%q' "$HOME_DIR/.local/bin")"
+
+  write_env_config
+
+  log "Saved config to $ENV_FILE"
+
+  arch="$(uname -m)"
+  if [[ "$arch" != "x86_64" ]]; then
+    error "Dropbox headless Linux binary from this script currently supports x86_64. Detected: $arch"
+  fi
+
+  if [[ ! -x "$DROPBOX_DAEMON" ]]; then
+    log "Installing Dropbox headless daemon to $DROPBOX_DIST_DIR"
+    tmp_tar="$(mktemp)"
+    wget -qO "$tmp_tar" "$DROPBOX_DOWNLOAD_URL"
+    run_as_local_user "$LOCAL_USER" tar -xzf "$tmp_tar" -C "$HOME_DIR"
+    rm -f "$tmp_tar"
+  fi
+
+  if [[ ! -f "$DROPBOX_CLI" ]]; then
+    log "Installing Dropbox CLI to $DROPBOX_CLI"
+    run_as_local_user_shell "$LOCAL_USER" "wget -qO $(printf '%q' "$DROPBOX_CLI") $(printf '%q' "$DROPBOX_CLI_URL")"
+    run_as_local_user_shell "$LOCAL_USER" "chmod +x $(printf '%q' "$DROPBOX_CLI")"
+  fi
+
+  start_dropbox_daemon
+
+  status_out="$(run_dropbox_cli status 2>&1 || true)"
+  if is_link_required_status "$status_out"; then
+    link_url="$(extract_link_url "$status_out")"
+    cat <<EOF
+
+Dropbox is not linked yet.
+EOF
+    if [[ -n "${link_url:-}" ]]; then
+      cat <<EOF
+Open this pairing URL:
+  $link_url
+EOF
+    else
+      cat <<EOF
+Run this command to get the pairing URL:
+  $DROPBOX_CLI start -i
+EOF
+    fi
+    cat <<EOF
+SCRIPT_MARKER: skiing
+
+After linking completes, re-run this installer to apply selective sync using:
+  PREFIX_PATH=$PREFIX_PATH
+  SYNC_FOLDERS=$SYNC_FOLDERS
+
+Or apply selective sync directly with:
+  $HOME_DIR/.local/bin/update-codedrop-sync-lxc.sh
+
+EOF
+    exit 0
+  fi
+
+  if ! wait_for_dropbox_ready; then
+    wait_rc=$?
+    if [[ "$wait_rc" -eq 10 ]]; then
+      cat <<EOF
+SCRIPT_MARKER: skiing
+
+Dropbox needs linking before selective sync can be applied.
+Run:
+  $DROPBOX_CLI start -i
+
+After linking completes, re-run this installer.
+
+Or apply selective sync directly with:
+  $HOME_DIR/.local/bin/update-codedrop-sync-lxc.sh
+
+EOF
+      exit 0
+    fi
+    tail_daemon_log
+    diagnose_dropbox_runtime
+    error "Dropbox daemon did not become ready. Check /tmp/codedrop-dropboxd.log and run '$DROPBOX_CLI status'."
+  fi
+
+  if ! configure_selective_sync; then
+    error "Early selective sync update failed. Verify PREFIX_PATH with '$DROPBOX_CLI ls \"$PREFIX_PATH_NORMALIZED\"', then rerun."
+  fi
+  write_env_config
+  log "Saved early selective sync config to $ENV_FILE"
+
+  if wait_for_dropbox_up_to_date; then
+    if configure_selective_sync; then
+      write_env_config
+      log "Saved effective config to $ENV_FILE"
+    else
+      error "Final selective sync verification failed. Verify PREFIX_PATH with '$DROPBOX_CLI ls \"$PREFIX_PATH_NORMALIZED\"', then rerun."
+    fi
+  else
+    wait_rc=$?
+    if [[ "$wait_rc" -eq 10 ]]; then
+      error "Dropbox became unlinked before final selective sync verification."
+    fi
+    error "Dropbox did not reach 'Up to date' in time for final selective sync verification."
+  fi
+}
+
 if ! command -v apt-get >/dev/null 2>&1; then
   error "apt-get not found. This installer currently supports Debian/Ubuntu-based LXC containers."
 fi
@@ -1021,6 +1150,7 @@ if [[ "$INSTALL_DROPBOX" == "y" ]]; then
 
   prompt_for_prefix_path "${existing_prefix:-/}"
   SYNC_FOLDERS="$(prompt "SYNC_FOLDERS (comma-separated relative folder paths to sync; empty = unchanged)" "${existing_sync:-}")"
+  install_and_configure_dropbox
 fi
 
 INSTALL_CODE_SERVER="n"
@@ -1081,95 +1211,6 @@ fi
 download_update_script_as_user
 
 if [[ "$INSTALL_DROPBOX" == "y" ]]; then
-  run_as_local_user_shell "$LOCAL_USER" "mkdir -p $(printf '%q' "$CONFIG_DIR") $(printf '%q' "$HOME_DIR/.local/bin")"
-
-  write_env_config
-
-  log "Saved config to $ENV_FILE"
-
-  ARCH="$(uname -m)"
-  if [[ "$ARCH" != "x86_64" ]]; then
-    error "Dropbox headless Linux binary from this script currently supports x86_64. Detected: $ARCH"
-  fi
-
-  if [[ ! -x "$DROPBOX_DAEMON" ]]; then
-    log "Installing Dropbox headless daemon to $DROPBOX_DIST_DIR"
-    TMP_TAR="$(mktemp)"
-    wget -qO "$TMP_TAR" "$DROPBOX_DOWNLOAD_URL"
-    run_as_local_user "$LOCAL_USER" tar -xzf "$TMP_TAR" -C "$HOME_DIR"
-    rm -f "$TMP_TAR"
-  fi
-
-  if [[ ! -f "$DROPBOX_CLI" ]]; then
-    log "Installing Dropbox CLI to $DROPBOX_CLI"
-    run_as_local_user_shell "$LOCAL_USER" "wget -qO $(printf '%q' "$DROPBOX_CLI") $(printf '%q' "$DROPBOX_CLI_URL")"
-    run_as_local_user_shell "$LOCAL_USER" "chmod +x $(printf '%q' "$DROPBOX_CLI")"
-  fi
-
-  start_dropbox_daemon
-
-  status_out="$(run_dropbox_cli status 2>&1 || true)"
-  if is_link_required_status "$status_out"; then
-    link_url="$(extract_link_url "$status_out")"
-    cat <<EOF
-
-Dropbox is not linked yet.
-EOF
-    if [[ -n "${link_url:-}" ]]; then
-      cat <<EOF
-Open this pairing URL:
-  $link_url
-EOF
-    else
-      cat <<EOF
-Run this command to get the pairing URL:
-  $DROPBOX_CLI start -i
-EOF
-    fi
-    cat <<EOF
-SCRIPT_MARKER: skiing
-
-After linking completes, re-run this installer to apply selective sync using:
-  PREFIX_PATH=$PREFIX_PATH
-  SYNC_FOLDERS=$SYNC_FOLDERS
-
-Or apply selective sync directly with:
-  $HOME_DIR/.local/bin/update-codedrop-sync-lxc.sh
-
-EOF
-    exit 0
-  fi
-
-  if wait_for_dropbox_ready; then
-    if configure_selective_sync; then
-      write_env_config
-      log "Saved effective config to $ENV_FILE"
-    else
-      error "Selective sync update failed. Verify PREFIX_PATH with '$DROPBOX_CLI ls \"$PREFIX_PATH_NORMALIZED\"', wait for Dropbox to finish startup, then rerun."
-    fi
-  else
-    wait_rc=$?
-    if [[ "$wait_rc" -eq 10 ]]; then
-      cat <<EOF
-SCRIPT_MARKER: skiing
-
-Dropbox needs linking before selective sync can be applied.
-Run:
-  $DROPBOX_CLI start -i
-
-After linking completes, re-run this installer.
-
-Or apply selective sync directly with:
-  $HOME_DIR/.local/bin/update-codedrop-sync-lxc.sh
-
-EOF
-      exit 0
-    fi
-    tail_daemon_log
-    diagnose_dropbox_runtime
-    error "Dropbox daemon did not become ready. Check /tmp/codedrop-dropboxd.log and run '$DROPBOX_CLI status'."
-  fi
-
   cat <<EOF
 SCRIPT_MARKER: skiing
 
