@@ -170,6 +170,19 @@ install_tailscale_as_root() {
   run_privileged sh -c 'curl -fsSL https://tailscale.com/install.sh | sh'
 }
 
+enable_tailscaled_service() {
+  if ! command -v tailscale >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if command -v systemctl >/dev/null 2>&1; then
+    log "Enabling and starting tailscaled service."
+    run_privileged systemctl enable --now tailscaled
+  else
+    log "systemctl not found; start tailscaled manually before running 'tailscale up'."
+  fi
+}
+
 install_claude_code_as_user() {
   local claude_extension_id="anthropic.claude-code"
 
@@ -999,7 +1012,7 @@ Run this command to get the pairing URL:
 EOF
     fi
     cat <<EOF
-SCRIPT_MARKER: stream
+SCRIPT_MARKER: fandom
 
 After linking completes, re-run this installer to apply selective sync using:
   PREFIX_PATH=$PREFIX_PATH
@@ -1016,7 +1029,7 @@ EOF
     wait_rc=$?
     if [[ "$wait_rc" -eq 10 ]]; then
       cat <<EOF
-SCRIPT_MARKER: stream
+SCRIPT_MARKER: fandom
 
 Dropbox needs linking before selective sync can be applied.
 Run:
@@ -1051,7 +1064,7 @@ if [[ "${EUID}" -ne 0 ]]; then
 fi
 
 INSTALL_DROPBOX="${INSTALL_DROPBOX:-n}"
-printf 'SCRIPT_MARKER: stream\n'
+printf 'SCRIPT_MARKER: fandom\n'
 if prompt_yes_no "Install/keep Dropbox (headless daemon + selective sync)?" "${INSTALL_DROPBOX}"; then
   INSTALL_DROPBOX="y"
 else
@@ -1070,11 +1083,13 @@ run_privileged env DEBIAN_FRONTEND=noninteractive apt-get install -y \
 INSTALL_TAILSCALE="n"
 if command -v tailscale >/dev/null 2>&1; then
   log "Tailscale is already installed; skipping Tailscale prompt."
+  enable_tailscaled_service
 elif prompt_yes_no "Install Tailscale?" "n"; then
   INSTALL_TAILSCALE="y"
 fi
 if [[ "$INSTALL_TAILSCALE" == "y" ]]; then
   install_tailscale_as_root
+  enable_tailscaled_service
 fi
 
 if [[ "$INSTALL_DROPBOX" == "y" ]]; then
@@ -1176,7 +1191,7 @@ download_update_script_as_user
 
 if [[ "$INSTALL_DROPBOX" == "y" ]]; then
   cat <<EOF
-SCRIPT_MARKER: stream
+SCRIPT_MARKER: fandom
 
 Install complete (headless Dropbox, no Docker).
 
@@ -1204,7 +1219,7 @@ If you installed Tailscale, bring it online with:
 EOF
 else
   cat <<EOF
-SCRIPT_MARKER: stream
+SCRIPT_MARKER: fandom
 
 Install complete.
 
