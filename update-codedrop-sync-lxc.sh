@@ -310,12 +310,34 @@ run_exclude_cmd() {
   local sync_path="$2"
   local rel_path
   local cmd_output
+  local attempt
+  local verify_try
 
   rel_path="${sync_path#/}"
-  cmd_output="$("$DROPBOX_CLI" exclude "$mode" "$rel_path" 2>&1)" && return 0
-  if [[ "$cmd_output" == *"already ignored"* || "$cmd_output" == *"isn't currently ignored"* || "$cmd_output" == *"not currently ignored"* ]]; then
-    return 0
-  fi
+  for attempt in 1 2 3 4 5; do
+    cmd_output="$("$DROPBOX_CLI" exclude "$mode" "$rel_path" 2>&1 || true)"
+    if [[ -n "$cmd_output" ]]; then
+      if [[ "$cmd_output" == *"already ignored"* || "$cmd_output" == *"isn't currently ignored"* || "$cmd_output" == *"not currently ignored"* || "$cmd_output" == *"Excluded:"* || "$cmd_output" == *"Included:"* ]]; then
+        :
+      elif [[ "$cmd_output" == *"Error"* || "$cmd_output" == *"error"* ]]; then
+        sleep 1
+        continue
+      fi
+    fi
+
+    for verify_try in 1 2 3 4 5; do
+      if [[ "$mode" == "add" ]]; then
+        if is_path_excluded "$rel_path"; then
+          return 0
+        fi
+      else
+        if ! is_path_excluded "$rel_path"; then
+          return 0
+        fi
+      fi
+      sleep 1
+    done
+  done
 
   return 1
 }
@@ -334,6 +356,15 @@ exclude_list_normalized() {
     [[ -z "$norm" ]] && continue
     printf '%s\n' "$norm"
   done < <("$DROPBOX_CLI" exclude list 2>/dev/null || true)
+}
+
+is_path_excluded() {
+  local rel_path="$1"
+  local line
+  while IFS= read -r line; do
+    [[ "$line" == "$rel_path" ]] && return 0
+  done < <(exclude_list_normalized)
+  return 1
 }
 
 parse_sync_folders() {
