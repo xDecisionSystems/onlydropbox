@@ -56,6 +56,29 @@ run_privileged() {
   fi
 }
 
+download_update_script_as_user() {
+  if [[ "${EUID}" -eq 0 ]]; then
+    error "Update script download must run as a non-root user."
+  fi
+
+  local update_script_url="https://raw.githubusercontent.com/xDecisionSystems/codedrop/main/update-codedrop-sync-lxc.sh"
+  local target_dir="$HOME/.local/bin"
+  local target_file="$target_dir/update-codedrop-sync-lxc.sh"
+
+  mkdir -p "$target_dir"
+
+  log "Downloading update helper script to $target_file"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$update_script_url" -o "$target_file"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO "$target_file" "$update_script_url"
+  else
+    error "Neither curl nor wget is available to download update-codedrop-sync-lxc.sh."
+  fi
+
+  chmod +x "$target_file"
+}
+
 install_code_server_as_user() {
   if [[ "${EUID}" -eq 0 ]]; then
     error "code-server installation must run as a non-root user."
@@ -612,6 +635,8 @@ if [[ "$INSTALL_LATEX_SUPPORT" == "y" ]]; then
 else
   log "Skipping LaTeX support installation."
 fi
+
+download_update_script_as_user
 
 if [[ "$INSTALL_DROPBOX" == "y" ]]; then
   existing_prefix="/"
