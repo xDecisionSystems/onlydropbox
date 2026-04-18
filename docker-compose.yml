@@ -2,8 +2,8 @@ version: "3.8"
 
 services:
   dropbox:
-    image: adclab/onlydropbox:latest
-    container_name: onlydropbox
+    image: adclab/codedrop:latest
+    container_name: codedrop
     restart: unless-stopped
     environment:
       # Base Dropbox path where selective sync rules are applied.

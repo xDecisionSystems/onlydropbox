@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Set variables here
-REPO="adclab/onlydropbox"
+REPO="adclab/codedrop"
 VERSION="v0.1"
 
 # Build image with both tags

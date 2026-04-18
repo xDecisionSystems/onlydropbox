@@ -40,7 +40,7 @@ docker compose up -d --build
 Check logs and open the Dropbox linking URL shown by the daemon:
 
 ```bash
-docker logs -f onlydropbox
+docker logs -f codedrop
 ```
 
 After linking, restart once:
@@ -64,16 +64,23 @@ Inside a Debian/Ubuntu LXC container, you can run the interactive installer. It:
 If you already cloned this repo:
 
 ```bash
-chmod +x install-onlydropbox-lxc.sh
-./install-onlydropbox-lxc.sh
+chmod +x install-codedrop-lxc.sh
+./install-codedrop-lxc.sh
 ```
 
 If you only want to download and run the script:
 
 ```bash
-wget -O install-onlydropbox-lxc.sh https://raw.githubusercontent.com/xdecisionsystems/onlydropbox/main/install-onlydropbox-lxc.sh
-chmod +x install-onlydropbox-lxc.sh
-./install-onlydropbox-lxc.sh
+wget -O install-codedrop-lxc.sh https://raw.githubusercontent.com/xdecisionsystems/codedrop/main/install-codedrop-lxc.sh
+chmod +x install-codedrop-lxc.sh
+./install-codedrop-lxc.sh
+```
+
+To update selective sync later (without reinstalling), run:
+
+```bash
+chmod +x update-codedrop-sync-lxc.sh
+./update-codedrop-sync-lxc.sh
 ```
 
 ## Volumes

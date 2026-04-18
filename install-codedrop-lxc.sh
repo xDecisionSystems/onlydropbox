@@ -27,6 +27,25 @@ prompt() {
   printf '%s' "$input"
 }
 
+prompt_yes_no() {
+  local label="$1"
+  local default_value="${2:-n}"
+  local input
+
+  while true; do
+    read -r -p "$label [$default_value]: " input || true
+    input="$(trim "${input:-}")"
+    input="${input,,}"
+    [[ -z "$input" ]] && input="${default_value,,}"
+
+    case "$input" in
+      y|yes) return 0 ;;
+      n|no) return 1 ;;
+      *) log "Please answer yes or no." ;;
+    esac
+  done
+}
+
 run_privileged() {
   if [[ "${EUID}" -eq 0 ]]; then
     "$@"
@@ -34,6 +53,145 @@ run_privileged() {
     sudo "$@"
   else
     error "Privilege escalation required for: $* (install sudo or run as root)"
+  fi
+}
+
+install_code_server_as_user() {
+  if [[ "${EUID}" -eq 0 ]]; then
+    error "code-server installation must run as a non-root user."
+  fi
+
+  if command -v code-server >/dev/null 2>&1; then
+    log "code-server is already installed for user '$USER'."
+    return 0
+  fi
+
+  if ! command -v curl >/dev/null 2>&1; then
+    error "curl is required to install code-server. Re-run as root so prerequisites can be installed."
+  fi
+
+  log "Installing code-server for user '$USER'."
+  curl -fsSL https://code-server.dev/install.sh | sh
+}
+
+install_claude_code_as_user() {
+  local claude_extension_id="anthropic.claude-code"
+
+  if [[ "${EUID}" -eq 0 ]]; then
+    error "Claude Code installation must run as a non-root user."
+  fi
+
+  if command -v claude >/dev/null 2>&1; then
+    log "Claude Code is already installed for user '$USER'."
+    return 0
+  fi
+
+  if ! command -v curl >/dev/null 2>&1; then
+    error "curl is required to install Claude Code. Re-run as root so prerequisites can be installed."
+  fi
+
+  log "Installing Claude Code for user '$USER'."
+  curl -fsSL https://claude.ai/install.sh | bash
+
+  if ! command -v code-server >/dev/null 2>&1; then
+    log "code-server not found; skipping Claude extension '$claude_extension_id' installation."
+    return 0
+  fi
+
+  if code-server --list-extensions 2>/dev/null | grep -Fxq "$claude_extension_id"; then
+    log "Claude extension '$claude_extension_id' is already installed for user '$USER'."
+    return 0
+  fi
+
+  log "Installing Claude extension '$claude_extension_id' for user '$USER'."
+  code-server --install-extension "$claude_extension_id"
+}
+
+install_codex_extension_as_user() {
+  if [[ "${EUID}" -eq 0 ]]; then
+    error "Codex extension installation must run as a non-root user."
+  fi
+
+  if ! command -v code-server >/dev/null 2>&1; then
+    error "code-server is required to install a Codex extension. Install code-server and re-run the installer."
+  fi
+
+  if [[ -z "${CODEX_EXTENSION_ID:-}" ]]; then
+    error "CODEX_EXTENSION_ID is required to install the Codex extension."
+  fi
+
+  if code-server --list-extensions 2>/dev/null | grep -Fxq "$CODEX_EXTENSION_ID"; then
+    log "Codex extension '$CODEX_EXTENSION_ID' is already installed for user '$USER'."
+    return 0
+  fi
+
+  log "Installing Codex extension '$CODEX_EXTENSION_ID' for user '$USER'."
+  code-server --install-extension "$CODEX_EXTENSION_ID"
+}
+
+install_python_extension_as_user() {
+  local python_extension_id="ms-python.python"
+
+  if [[ "${EUID}" -eq 0 ]]; then
+    error "Python extension installation must run as a non-root user."
+  fi
+
+  if ! command -v code-server >/dev/null 2>&1; then
+    error "code-server is required to install the Python extension. Install code-server and re-run the installer."
+  fi
+
+  if code-server --list-extensions 2>/dev/null | grep -Fxq "$python_extension_id"; then
+    log "Python extension '$python_extension_id' is already installed for user '$USER'."
+    return 0
+  fi
+
+  log "Installing Python extension '$python_extension_id' for user '$USER'."
+  code-server --install-extension "$python_extension_id"
+}
+
+install_latex_prereqs_as_root() {
+  if ! command -v apt-get >/dev/null 2>&1; then
+    log "apt-get not found; skipping automatic install of latexindent.pl/cpanm/chktex prerequisites."
+    return 0
+  fi
+
+  log "Installing LaTeX formatting/linting prerequisites in root mode (latexindent.pl, cpanm, chktex)."
+  run_privileged sh -c '
+    set -e
+    [ "$(id -u)" -eq 0 ] || { echo "Root mode required for LaTeX prerequisites." >&2; exit 1; }
+    apt-get update
+    DEBIAN_FRONTEND=noninteractive apt-get install -y \
+      perl \
+      cpanminus \
+      texlive-extra-utils \
+      chktex
+  '
+}
+
+install_latex_support_as_user() {
+  local latex_extension_id="mathematic.vscode-latex"
+
+  if [[ "${EUID}" -eq 0 ]]; then
+    error "LaTeX support installation must run as a non-root user."
+  fi
+
+  if ! command -v code-server >/dev/null 2>&1; then
+    error "code-server is required to install LaTeX support. Install code-server and re-run the installer."
+  fi
+
+  install_latex_prereqs_as_root
+
+  if code-server --list-extensions 2>/dev/null | grep -Fxq "$latex_extension_id"; then
+    log "LaTeX extension '$latex_extension_id' is already installed for user '$USER'."
+  else
+    log "Installing LaTeX extension '$latex_extension_id' for user '$USER'."
+    code-server --install-extension "$latex_extension_id"
+  fi
+
+  if command -v latexindent.pl >/dev/null 2>&1; then
+    log "latexindent.pl detected. On first format, install any prompted Perl modules via cpanm."
+  else
+    log "latexindent.pl not found after install attempt. Install 'texlive-extra-utils' and re-run."
   fi
 }
 
@@ -66,7 +224,7 @@ reexec_as_dropbox_user() {
   if [[ "${EUID}" -ne 0 ]]; then
     return 0
   fi
-  if [[ "${ONLYDROPBOX_AS_USER:-}" == "1" ]]; then
+  if [[ "${CODEDROP_AS_USER:-}" == "1" ]]; then
     return 0
   fi
 
@@ -97,7 +255,7 @@ reexec_as_dropbox_user() {
   script_target="$script_source"
   if command -v runuser >/dev/null 2>&1; then
     if ! runuser -u "$dropbox_user" -- test -r "$script_target" >/dev/null 2>&1; then
-      script_target="/tmp/install-onlydropbox-lxc.sh"
+      script_target="/tmp/install-codedrop-lxc.sh"
       log "Copying installer to $script_target so '$dropbox_user' can execute it."
       cp "$script_source" "$script_target"
       chown "$dropbox_user":"$dropbox_user" "$script_target"
@@ -106,19 +264,19 @@ reexec_as_dropbox_user() {
 
     log "Re-running installer as '$dropbox_user'."
     exec runuser -u "$dropbox_user" -- env \
-      ONLYDROPBOX_AS_USER=1 \
+      CODEDROP_AS_USER=1 \
       DROPBOX_USER="$dropbox_user" \
       HOME="$dropbox_home" \
       LC_ALL=C \
       bash "$script_target"
   fi
 
-  script_target="/tmp/install-onlydropbox-lxc.sh"
+  script_target="/tmp/install-codedrop-lxc.sh"
   log "runuser not found; using su. Copying installer to $script_target."
   cp "$script_source" "$script_target"
   chown "$dropbox_user":"$dropbox_user" "$script_target"
   chmod 755 "$script_target"
-  exec su - "$dropbox_user" -c "ONLYDROPBOX_AS_USER=1 DROPBOX_USER='$dropbox_user' LC_ALL=C bash '$script_target'"
+  exec su - "$dropbox_user" -c "CODEDROP_AS_USER=1 DROPBOX_USER='$dropbox_user' LC_ALL=C bash '$script_target'"
 }
 
 trim() {
@@ -219,7 +377,7 @@ wait_for_dropbox_ready() {
 }
 
 tail_daemon_log() {
-  local log_file="/tmp/onlydropbox-dropboxd.log"
+  local log_file="/tmp/codedrop-dropboxd.log"
   if [[ -f "$log_file" ]]; then
     log "Recent Dropbox daemon log (last 60 lines):"
     tail -n 60 "$log_file" >&2 || true
@@ -268,7 +426,7 @@ start_dropbox_daemon() {
   fi
 
   log "Starting Dropbox daemon in background."
-  nohup "$DROPBOX_DAEMON" >/tmp/onlydropbox-dropboxd.log 2>&1 &
+  nohup "$DROPBOX_DAEMON" >/tmp/codedrop-dropboxd.log 2>&1 &
   sleep 4
 
   if pgrep -f "$DROPBOX_DAEMON" >/dev/null 2>&1; then
@@ -348,8 +506,8 @@ configure_selective_sync() {
 }
 
 HOME_DIR="${HOME:-/root}"
-CONFIG_DIR="$HOME_DIR/.config/onlydropbox"
-ENV_FILE="$CONFIG_DIR/onlydropbox.env"
+CONFIG_DIR="$HOME_DIR/.config/codedrop"
+ENV_FILE="$CONFIG_DIR/codedrop.env"
 DROPBOX_DIST_DIR="$HOME_DIR/.dropbox-dist"
 DROPBOX_DAEMON="$DROPBOX_DIST_DIR/dropboxd"
 DROPBOX_CLI="$HOME_DIR/.local/bin/dropbox"
@@ -360,11 +518,12 @@ if ! command -v apt-get >/dev/null 2>&1; then
   error "apt-get not found. This installer currently supports Debian/Ubuntu-based LXC containers."
 fi
 
-if [[ "${EUID}" -eq 0 && "${ONLYDROPBOX_AS_USER:-}" != "1" ]]; then
+if [[ "${EUID}" -eq 0 && "${CODEDROP_AS_USER:-}" != "1" ]]; then
   log "Installing minimal baseline packages."
   run_privileged apt-get update
   run_privileged env DEBIAN_FRONTEND=noninteractive apt-get install -y \
     ca-certificates \
+    curl \
     wget \
     libatomic1 \
     libglib2.0-0 \
@@ -377,13 +536,68 @@ if [[ "${EUID}" -eq 0 && "${ONLYDROPBOX_AS_USER:-}" != "1" ]]; then
   reexec_as_dropbox_user
 fi
 
+INSTALL_CODE_SERVER="n"
+if prompt_yes_no "Install code-server for user '$USER'?" "n"; then
+  INSTALL_CODE_SERVER="y"
+fi
+if [[ "$INSTALL_CODE_SERVER" == "y" ]]; then
+  install_code_server_as_user
+else
+  log "Skipping code-server installation."
+fi
+
+INSTALL_CLAUDE_CODE="n"
+if prompt_yes_no "Install Claude Code for user '$USER'?" "n"; then
+  INSTALL_CLAUDE_CODE="y"
+fi
+if [[ "$INSTALL_CLAUDE_CODE" == "y" ]]; then
+  install_claude_code_as_user
+else
+  log "Skipping Claude Code installation."
+fi
+
+INSTALL_CODEX_EXTENSION="n"
+if prompt_yes_no "Install Codex extension in code-server for user '$USER'?" "n"; then
+  INSTALL_CODEX_EXTENSION="y"
+fi
+if [[ "$INSTALL_CODEX_EXTENSION" == "y" ]]; then
+  CODEX_EXTENSION_ID="$(prompt "CODEX_EXTENSION_ID (VS Code extension id, e.g. publisher.extension)" "${CODEX_EXTENSION_ID:-openai.chatgpt}")"
+  CODEX_EXTENSION_ID="$(trim "$CODEX_EXTENSION_ID")"
+  if [[ -z "$CODEX_EXTENSION_ID" ]]; then
+    error "CODEX_EXTENSION_ID cannot be empty when Codex extension installation is selected."
+  fi
+  install_codex_extension_as_user
+else
+  log "Skipping Codex extension installation."
+fi
+
+INSTALL_PYTHON_EXTENSION="n"
+if prompt_yes_no "Enable Python support in code-server for user '$USER'?" "n"; then
+  INSTALL_PYTHON_EXTENSION="y"
+fi
+if [[ "$INSTALL_PYTHON_EXTENSION" == "y" ]]; then
+  install_python_extension_as_user
+else
+  log "Skipping Python extension installation."
+fi
+
+INSTALL_LATEX_SUPPORT="n"
+if prompt_yes_no "Enable LaTeX formatting in code-server for user '$USER'?" "n"; then
+  INSTALL_LATEX_SUPPORT="y"
+fi
+if [[ "$INSTALL_LATEX_SUPPORT" == "y" ]]; then
+  install_latex_support_as_user
+else
+  log "Skipping LaTeX support installation."
+fi
+
 PREFIX_PATH="$(prompt "PREFIX_PATH (Dropbox base path)" "/")"
 SYNC_FOLDERS="$(prompt "SYNC_FOLDERS (comma-separated first-level folders to sync; empty = unchanged)" "")"
 
 mkdir -p "$CONFIG_DIR" "$HOME_DIR/.local/bin"
 
 cat > "$ENV_FILE" <<EOF
-# Generated by install-onlydropbox-lxc.sh on $(date '+%Y-%m-%d %H:%M:%S')
+# Generated by install-codedrop-lxc.sh on $(date '+%Y-%m-%d %H:%M:%S')
 PREFIX_PATH=$PREFIX_PATH
 SYNC_FOLDERS=$SYNC_FOLDERS
 EOF
@@ -457,7 +671,7 @@ EOF
   fi
   tail_daemon_log
   diagnose_dropbox_runtime
-  error "Dropbox daemon did not become ready. Check /tmp/onlydropbox-dropboxd.log and run '$DROPBOX_CLI status'."
+  error "Dropbox daemon did not become ready. Check /tmp/codedrop-dropboxd.log and run '$DROPBOX_CLI status'."
 fi
 
 cat <<EOF
