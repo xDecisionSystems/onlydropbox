@@ -552,10 +552,12 @@ if ! command -v apt-get >/dev/null 2>&1; then
 fi
 
 INSTALL_DROPBOX="${INSTALL_DROPBOX:-n}"
-if prompt_yes_no "Install Dropbox (headless daemon + selective sync)?" "${INSTALL_DROPBOX}"; then
-  INSTALL_DROPBOX="y"
-else
-  INSTALL_DROPBOX="n"
+if [[ "${CODEDROP_AS_USER:-}" != "1" ]]; then
+  if prompt_yes_no "Install Dropbox (headless daemon + selective sync)?" "${INSTALL_DROPBOX}"; then
+    INSTALL_DROPBOX="y"
+  else
+    INSTALL_DROPBOX="n"
+  fi
 fi
 
 if [[ "${EUID}" -eq 0 && "${CODEDROP_AS_USER:-}" != "1" ]]; then
@@ -578,7 +580,7 @@ if [[ "${EUID}" -eq 0 && "${CODEDROP_AS_USER:-}" != "1" ]]; then
       libstdc++6
   fi
 
-  if [[ "$INSTALL_DROPBOX" == "y" ]]; then
+  if [[ "$INSTALL_DROPBOX" == "y" && -z "${DROPBOX_USER:-}" ]]; then
     prompt_for_dropbox_user
   fi
   reexec_as_dropbox_user
