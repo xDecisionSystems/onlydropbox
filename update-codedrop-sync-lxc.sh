@@ -197,32 +197,43 @@ prompt_for_prefix_path() {
 
 normalize_prefix_path() {
   local raw="${PREFIX_PATH:-}"
+  local rel
   raw="$(trim "$raw")"
   [[ -z "$raw" ]] && raw="/"
 
-  if [[ "$raw" == "/" ]]; then
-    PREFIX_PATH_NORMALIZED="$HOME_DIR"
+  if [[ "$raw" == "/" || "$raw" == "$HOME_DIR" || "$raw" == "$HOME_DIR/" ]]; then
+    PREFIX_PATH_NORMALIZED="/"
+    PREFIX_PATH_LS_NORMALIZED="$HOME_DIR"
+  elif [[ "$raw" == "$HOME_DIR/"* ]]; then
+    rel="${raw#"$HOME_DIR"/}"
+    rel="${rel#/}"
+    rel="${rel%/}"
+    PREFIX_PATH_NORMALIZED="/$rel"
+    PREFIX_PATH_LS_NORMALIZED="$HOME_DIR/$rel"
   elif [[ "$raw" == /* ]]; then
     PREFIX_PATH_NORMALIZED="${raw%/}"
     [[ -z "$PREFIX_PATH_NORMALIZED" ]] && PREFIX_PATH_NORMALIZED="/"
+    PREFIX_PATH_LS_NORMALIZED="$PREFIX_PATH_NORMALIZED"
   else
     raw="${raw#/}"
     raw="${raw%/}"
-    PREFIX_PATH_NORMALIZED="$HOME_DIR/$raw"
+    PREFIX_PATH_NORMALIZED="/$raw"
+    PREFIX_PATH_LS_NORMALIZED="$HOME_DIR/$raw"
   fi
 
   while [[ "$PREFIX_PATH_NORMALIZED" == *"//"* ]]; do
     PREFIX_PATH_NORMALIZED="${PREFIX_PATH_NORMALIZED//\/\//\/}"
   done
+  while [[ "$PREFIX_PATH_LS_NORMALIZED" == *"//"* ]]; do
+    PREFIX_PATH_LS_NORMALIZED="${PREFIX_PATH_LS_NORMALIZED//\/\//\/}"
+  done
 }
 
 update_prefix_path_from_normalized() {
-  if [[ "$PREFIX_PATH_NORMALIZED" == "$HOME_DIR" ]]; then
+  if [[ "$PREFIX_PATH_NORMALIZED" == "/" ]]; then
     PREFIX_PATH="/"
-  elif [[ "$PREFIX_PATH_NORMALIZED" == "$HOME_DIR/"* ]]; then
-    PREFIX_PATH="${PREFIX_PATH_NORMALIZED#"$HOME_DIR"/}"
   else
-    PREFIX_PATH="$PREFIX_PATH_NORMALIZED"
+    PREFIX_PATH="${PREFIX_PATH_NORMALIZED#/}"
   fi
 }
 
@@ -282,6 +293,15 @@ build_full_path() {
     printf '/%s' "$child"
   else
     printf '%s/%s' "$PREFIX_PATH_NORMALIZED" "$child"
+  fi
+}
+
+build_ls_path() {
+  local child="$1"
+  if [[ "$PREFIX_PATH_LS_NORMALIZED" == "/" ]]; then
+    printf '/%s' "$child"
+  else
+    printf '%s/%s' "$PREFIX_PATH_LS_NORMALIZED" "$child"
   fi
 }
 
@@ -421,15 +441,22 @@ configure_selective_sync() {
   local action_failures=0
   local fallback_prefix=""
 
-  if ! path_has_listable_entries "$PREFIX_PATH_NORMALIZED"; then
-    fallback_prefix="$(nearest_listable_nonroot_parent "$PREFIX_PATH_NORMALIZED" || true)"
+  if ! path_has_listable_entries "$PREFIX_PATH_LS_NORMALIZED"; then
+    fallback_prefix="$(nearest_listable_nonroot_parent "$PREFIX_PATH_LS_NORMALIZED" || true)"
     if [[ -n "$fallback_prefix" ]]; then
-      log "Configured PREFIX_PATH is not listable: ${PREFIX_PATH_NORMALIZED}"
+      log "Configured PREFIX_PATH is not listable: ${PREFIX_PATH_LS_NORMALIZED}"
       log "Falling back to nearest listable parent: ${fallback_prefix}"
-      PREFIX_PATH_NORMALIZED="$fallback_prefix"
+      PREFIX_PATH_LS_NORMALIZED="$fallback_prefix"
+      if [[ "$PREFIX_PATH_LS_NORMALIZED" == "$HOME_DIR" ]]; then
+        PREFIX_PATH_NORMALIZED="/"
+      elif [[ "$PREFIX_PATH_LS_NORMALIZED" == "$HOME_DIR/"* ]]; then
+        PREFIX_PATH_NORMALIZED="/${PREFIX_PATH_LS_NORMALIZED#"$HOME_DIR"/}"
+      else
+        PREFIX_PATH_NORMALIZED="$PREFIX_PATH_LS_NORMALIZED"
+      fi
       update_prefix_path_from_normalized
     else
-      log "Configured PREFIX_PATH is not listable: ${PREFIX_PATH_NORMALIZED}"
+      log "Configured PREFIX_PATH is not listable: ${PREFIX_PATH_LS_NORMALIZED}"
       log "No safe non-root parent is listable yet; refusing to fall back to '/'."
       return 2
     fi
@@ -451,9 +478,9 @@ configure_selective_sync() {
     fi
 
     if [[ -z "$current_effective_rel" ]]; then
-      current_full="$PREFIX_PATH_NORMALIZED"
+      current_full="$PREFIX_PATH_LS_NORMALIZED"
     else
-      current_full="$(build_full_path "$current_effective_rel")"
+      current_full="$(build_ls_path "$current_effective_rel")"
     fi
     current_trimmed="${current_full#/}"
 
@@ -463,9 +490,15 @@ configure_selective_sync() {
     fi
 
     for name in "${remote_entries[@]}"; do
+      # Dropbox CLI may print multiple entries per line in column layout.
+      while IFS= read -r name; do
+        [[ -z "$name" ]] && continue
       normalized="${name%/}"
       normalized="${normalized#/}"
       if [[ "$normalized" == *" (File doesn't exist!)" ]]; then
+        continue
+      fi
+      if [[ "$normalized" == *" (The 'path' argument does not exist)"* ]]; then
         continue
       fi
       if [[ -n "$current_trimmed" && "$current_trimmed" != "/" ]]; then
@@ -513,11 +546,12 @@ configure_selective_sync() {
       if is_ancestor_of_allowed "$rel_path"; then
         queue+=("$rel_path")
       fi
+      done < <(printf '%s\n' "$name" | awk 'BEGIN{FS="  +"} {for(i=1;i<=NF;i++) if(length($i)) print $i}')
     done
   done
 
   if [[ "$saw_valid_entry" -eq 0 ]]; then
-    log "No listable entries found under ${PREFIX_PATH_NORMALIZED}. Verify PREFIX_PATH with: $DROPBOX_CLI ls \"$PREFIX_PATH_NORMALIZED\""
+    log "No listable entries found under ${PREFIX_PATH_LS_NORMALIZED}. Verify PREFIX_PATH with: $DROPBOX_CLI ls \"$PREFIX_PATH_LS_NORMALIZED\""
     return 2
   fi
 
