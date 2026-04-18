@@ -151,8 +151,9 @@ install_code_server_as_user() {
     error "curl is required to install code-server. Re-run as root so prerequisites can be installed."
   fi
 
-  log "Installing code-server for user '$LOCAL_USER'."
-  run_as_local_user_shell "$LOCAL_USER" "curl -fsSL https://code-server.dev/install.sh | sh"
+  # The upstream installer needs root for dpkg; run it as root to avoid nested su prompts.
+  log "Installing code-server system-wide (usable by user '$LOCAL_USER')."
+  run_privileged sh -c 'curl -fsSL https://code-server.dev/install.sh | sh'
 }
 
 install_claude_code_as_user() {
@@ -991,7 +992,7 @@ Run this command to get the pairing URL:
 EOF
     fi
     cat <<EOF
-SCRIPT_MARKER: salsa
+SCRIPT_MARKER: cat
 
 After linking completes, re-run this installer to apply selective sync using:
   PREFIX_PATH=$PREFIX_PATH
@@ -1008,7 +1009,7 @@ EOF
     wait_rc=$?
     if [[ "$wait_rc" -eq 10 ]]; then
       cat <<EOF
-SCRIPT_MARKER: salsa
+SCRIPT_MARKER: cat
 
 Dropbox needs linking before selective sync can be applied.
 Run:
@@ -1043,7 +1044,7 @@ if [[ "${EUID}" -ne 0 ]]; then
 fi
 
 INSTALL_DROPBOX="${INSTALL_DROPBOX:-n}"
-printf 'SCRIPT_MARKER: salsa\n'
+printf 'SCRIPT_MARKER: cat\n'
 if prompt_yes_no "Install/keep Dropbox (headless daemon + selective sync)?" "${INSTALL_DROPBOX}"; then
   INSTALL_DROPBOX="y"
 else
@@ -1173,7 +1174,7 @@ download_update_script_as_user
 
 if [[ "$INSTALL_DROPBOX" == "y" ]]; then
   cat <<EOF
-SCRIPT_MARKER: salsa
+SCRIPT_MARKER: cat
 
 Install complete (headless Dropbox, no Docker).
 
@@ -1198,7 +1199,7 @@ Useful commands:
 EOF
 else
   cat <<EOF
-SCRIPT_MARKER: salsa
+SCRIPT_MARKER: cat
 
 Install complete.
 
