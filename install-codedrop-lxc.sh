@@ -56,36 +56,117 @@ run_privileged() {
   fi
 }
 
-download_update_script_as_user() {
-  if [[ "${EUID}" -eq 0 ]]; then
-    error "Update script download must run as a non-root user."
+LOCAL_USER="${DROPBOX_USER:-${SUDO_USER:-${USER:-}}}"
+LOCAL_HOME="${HOME:-/root}"
+
+resolve_user_home() {
+  local user_name="$1"
+  local home_dir=""
+
+  if [[ -z "$user_name" ]]; then
+    printf '%s' "${HOME:-/root}"
+    return 0
   fi
 
+  if [[ "$user_name" == "$(id -un)" ]]; then
+    printf '%s' "${HOME:-/root}"
+    return 0
+  fi
+
+  if id -u "$user_name" >/dev/null 2>&1; then
+    home_dir="$(getent passwd "$user_name" | cut -d: -f6)"
+  fi
+  printf '%s' "${home_dir:-/home/$user_name}"
+}
+
+run_as_local_user() {
+  local target_user="${1:-$LOCAL_USER}"
+  shift || true
+
+  [[ -z "$target_user" ]] && error "No local user configured for user-scoped command execution."
+  [[ "$#" -eq 0 ]] && error "run_as_local_user requires a command."
+
+  if [[ "$(id -un)" == "$target_user" ]]; then
+    "$@"
+    return $?
+  fi
+
+  if [[ "${EUID}" -eq 0 ]]; then
+    if command -v runuser >/dev/null 2>&1; then
+      runuser -u "$target_user" -- "$@"
+      return $?
+    fi
+
+    local escaped_cmd
+    printf -v escaped_cmd '%q ' "$@"
+    escaped_cmd="${escaped_cmd% }"
+    su - "$target_user" -c "$escaped_cmd"
+    return $?
+  fi
+
+  error "Cannot run command as '$target_user' without root privileges."
+}
+
+run_as_local_user_shell() {
+  local target_user="${1:-$LOCAL_USER}"
+  shift || true
+  [[ -z "$target_user" ]] && error "No local user configured for user-scoped command execution."
+  [[ "$#" -eq 0 ]] && error "run_as_local_user_shell requires a command string."
+
+  local shell_cmd="$1"
+
+  if [[ "$(id -un)" == "$target_user" ]]; then
+    bash -lc "$shell_cmd"
+    return $?
+  fi
+
+  if [[ "${EUID}" -eq 0 ]]; then
+    if command -v runuser >/dev/null 2>&1; then
+      runuser -u "$target_user" -- bash -lc "$shell_cmd"
+    else
+      su - "$target_user" -c "$shell_cmd"
+    fi
+    return $?
+  fi
+
+  error "Cannot run shell command as '$target_user' without root privileges."
+}
+
+run_dropbox_cli() {
+  run_as_local_user "${DROPBOX_USER:-$LOCAL_USER}" "$DROPBOX_CLI" "$@"
+}
+
+refresh_runtime_paths() {
+  HOME_DIR="${LOCAL_HOME:-${HOME:-/root}}"
+  CONFIG_DIR="$HOME_DIR/.config/codedrop"
+  ENV_FILE="$CONFIG_DIR/codedrop.env"
+  DROPBOX_DIST_DIR="$HOME_DIR/.dropbox-dist"
+  DROPBOX_DAEMON="$DROPBOX_DIST_DIR/dropboxd"
+  DROPBOX_CLI="$HOME_DIR/.local/bin/dropbox"
+}
+
+download_update_script_as_user() {
   local update_script_url="https://raw.githubusercontent.com/xDecisionSystems/codedrop/main/update-codedrop-sync-lxc.sh"
-  local target_dir="$HOME/.local/bin"
+  local target_dir="$HOME_DIR/.local/bin"
   local target_file="$target_dir/update-codedrop-sync-lxc.sh"
 
-  mkdir -p "$target_dir"
+  run_as_local_user_shell "$LOCAL_USER" "mkdir -p $(printf '%q' "$target_dir")"
 
-  log "Downloading update helper script to $target_file"
+  log "Downloading update helper script to $target_file for user '$LOCAL_USER'"
   if command -v curl >/dev/null 2>&1; then
-    curl -fsSL "$update_script_url" -o "$target_file"
+    run_as_local_user_shell "$LOCAL_USER" "curl -fsSL $(printf '%q' "$update_script_url") -o $(printf '%q' "$target_file")"
   elif command -v wget >/dev/null 2>&1; then
-    wget -qO "$target_file" "$update_script_url"
+    run_as_local_user_shell "$LOCAL_USER" "wget -qO $(printf '%q' "$target_file") $(printf '%q' "$update_script_url")"
   else
     error "Neither curl nor wget is available to download update-codedrop-sync-lxc.sh."
   fi
 
-  chmod +x "$target_file"
+  run_as_local_user_shell "$LOCAL_USER" "chmod +x $(printf '%q' "$target_file")"
 }
 
 install_code_server_as_user() {
-  if [[ "${EUID}" -eq 0 ]]; then
-    error "code-server installation must run as a non-root user."
-  fi
-
-  if command -v code-server >/dev/null 2>&1; then
-    log "code-server is already installed for user '$USER'."
+  if run_as_local_user_shell "$LOCAL_USER" "command -v code-server >/dev/null 2>&1"; then
+    log "code-server is already installed for user '$LOCAL_USER'."
     return 0
   fi
 
@@ -93,19 +174,15 @@ install_code_server_as_user() {
     error "curl is required to install code-server. Re-run as root so prerequisites can be installed."
   fi
 
-  log "Installing code-server for user '$USER'."
-  curl -fsSL https://code-server.dev/install.sh | sh
+  log "Installing code-server for user '$LOCAL_USER'."
+  run_as_local_user_shell "$LOCAL_USER" "curl -fsSL https://code-server.dev/install.sh | sh"
 }
 
 install_claude_code_as_user() {
   local claude_extension_id="anthropic.claude-code"
 
-  if [[ "${EUID}" -eq 0 ]]; then
-    error "Claude Code installation must run as a non-root user."
-  fi
-
-  if command -v claude >/dev/null 2>&1; then
-    log "Claude Code is already installed for user '$USER'."
+  if run_as_local_user_shell "$LOCAL_USER" "command -v claude >/dev/null 2>&1"; then
+    log "Claude Code is already installed for user '$LOCAL_USER'."
     return 0
   fi
 
@@ -113,29 +190,25 @@ install_claude_code_as_user() {
     error "curl is required to install Claude Code. Re-run as root so prerequisites can be installed."
   fi
 
-  log "Installing Claude Code for user '$USER'."
-  curl -fsSL https://claude.ai/install.sh | bash
+  log "Installing Claude Code for user '$LOCAL_USER'."
+  run_as_local_user_shell "$LOCAL_USER" "curl -fsSL https://claude.ai/install.sh | bash"
 
-  if ! command -v code-server >/dev/null 2>&1; then
+  if ! run_as_local_user_shell "$LOCAL_USER" "command -v code-server >/dev/null 2>&1"; then
     log "code-server not found; skipping Claude extension '$claude_extension_id' installation."
     return 0
   fi
 
-  if code-server --list-extensions 2>/dev/null | grep -Fxq "$claude_extension_id"; then
-    log "Claude extension '$claude_extension_id' is already installed for user '$USER'."
+  if run_as_local_user_shell "$LOCAL_USER" "code-server --list-extensions 2>/dev/null | grep -Fxq $(printf '%q' "$claude_extension_id")"; then
+    log "Claude extension '$claude_extension_id' is already installed for user '$LOCAL_USER'."
     return 0
   fi
 
-  log "Installing Claude extension '$claude_extension_id' for user '$USER'."
-  code-server --install-extension "$claude_extension_id"
+  log "Installing Claude extension '$claude_extension_id' for user '$LOCAL_USER'."
+  run_as_local_user_shell "$LOCAL_USER" "code-server --install-extension $(printf '%q' "$claude_extension_id")"
 }
 
 install_codex_extension_as_user() {
-  if [[ "${EUID}" -eq 0 ]]; then
-    error "Codex extension installation must run as a non-root user."
-  fi
-
-  if ! command -v code-server >/dev/null 2>&1; then
+  if ! run_as_local_user_shell "$LOCAL_USER" "command -v code-server >/dev/null 2>&1"; then
     error "code-server is required to install a Codex extension. Install code-server and re-run the installer."
   fi
 
@@ -143,33 +216,29 @@ install_codex_extension_as_user() {
     error "CODEX_EXTENSION_ID is required to install the Codex extension."
   fi
 
-  if code-server --list-extensions 2>/dev/null | grep -Fxq "$CODEX_EXTENSION_ID"; then
-    log "Codex extension '$CODEX_EXTENSION_ID' is already installed for user '$USER'."
+  if run_as_local_user_shell "$LOCAL_USER" "code-server --list-extensions 2>/dev/null | grep -Fxq $(printf '%q' "$CODEX_EXTENSION_ID")"; then
+    log "Codex extension '$CODEX_EXTENSION_ID' is already installed for user '$LOCAL_USER'."
     return 0
   fi
 
-  log "Installing Codex extension '$CODEX_EXTENSION_ID' for user '$USER'."
-  code-server --install-extension "$CODEX_EXTENSION_ID"
+  log "Installing Codex extension '$CODEX_EXTENSION_ID' for user '$LOCAL_USER'."
+  run_as_local_user_shell "$LOCAL_USER" "code-server --install-extension $(printf '%q' "$CODEX_EXTENSION_ID")"
 }
 
 install_python_extension_as_user() {
   local python_extension_id="ms-python.python"
 
-  if [[ "${EUID}" -eq 0 ]]; then
-    error "Python extension installation must run as a non-root user."
-  fi
-
-  if ! command -v code-server >/dev/null 2>&1; then
+  if ! run_as_local_user_shell "$LOCAL_USER" "command -v code-server >/dev/null 2>&1"; then
     error "code-server is required to install the Python extension. Install code-server and re-run the installer."
   fi
 
-  if code-server --list-extensions 2>/dev/null | grep -Fxq "$python_extension_id"; then
-    log "Python extension '$python_extension_id' is already installed for user '$USER'."
+  if run_as_local_user_shell "$LOCAL_USER" "code-server --list-extensions 2>/dev/null | grep -Fxq $(printf '%q' "$python_extension_id")"; then
+    log "Python extension '$python_extension_id' is already installed for user '$LOCAL_USER'."
     return 0
   fi
 
-  log "Installing Python extension '$python_extension_id' for user '$USER'."
-  code-server --install-extension "$python_extension_id"
+  log "Installing Python extension '$python_extension_id' for user '$LOCAL_USER'."
+  run_as_local_user_shell "$LOCAL_USER" "code-server --install-extension $(printf '%q' "$python_extension_id")"
 }
 
 install_latex_prereqs_as_root() {
@@ -194,21 +263,17 @@ install_latex_prereqs_as_root() {
 install_latex_support_as_user() {
   local latex_extension_id="mathematic.vscode-latex"
 
-  if [[ "${EUID}" -eq 0 ]]; then
-    error "LaTeX support installation must run as a non-root user."
-  fi
-
-  if ! command -v code-server >/dev/null 2>&1; then
+  if ! run_as_local_user_shell "$LOCAL_USER" "command -v code-server >/dev/null 2>&1"; then
     error "code-server is required to install LaTeX support. Install code-server and re-run the installer."
   fi
 
   install_latex_prereqs_as_root
 
-  if code-server --list-extensions 2>/dev/null | grep -Fxq "$latex_extension_id"; then
-    log "LaTeX extension '$latex_extension_id' is already installed for user '$USER'."
+  if run_as_local_user_shell "$LOCAL_USER" "code-server --list-extensions 2>/dev/null | grep -Fxq $(printf '%q' "$latex_extension_id")"; then
+    log "LaTeX extension '$latex_extension_id' is already installed for user '$LOCAL_USER'."
   else
-    log "Installing LaTeX extension '$latex_extension_id' for user '$USER'."
-    code-server --install-extension "$latex_extension_id"
+    log "Installing LaTeX extension '$latex_extension_id' for user '$LOCAL_USER'."
+    run_as_local_user_shell "$LOCAL_USER" "code-server --install-extension $(printf '%q' "$latex_extension_id")"
   fi
 
   if command -v latexindent.pl >/dev/null 2>&1; then
@@ -241,66 +306,6 @@ prompt_for_dropbox_user() {
     DROPBOX_USER="$chosen"
     return 0
   done
-}
-
-reexec_as_dropbox_user() {
-  if [[ "${EUID}" -ne 0 ]]; then
-    return 0
-  fi
-  if [[ "${CODEDROP_AS_USER:-}" == "1" ]]; then
-    return 0
-  fi
-
-  local dropbox_user="${DROPBOX_USER:-dropbox}"
-  local dropbox_home
-  local script_source
-  local script_target
-
-  if ! is_valid_unix_username "$dropbox_user"; then
-    error "Invalid DROPBOX_USER '$dropbox_user'."
-  fi
-
-  if id -u "$dropbox_user" >/dev/null 2>&1; then
-    dropbox_home="$(getent passwd "$dropbox_user" | cut -d: -f6)"
-    dropbox_home="${dropbox_home:-/home/$dropbox_user}"
-  else
-    dropbox_home="/home/$dropbox_user"
-  fi
-
-  script_source="$(readlink -f "$0" 2>/dev/null || printf '%s' "$0")"
-  if ! id -u "$dropbox_user" >/dev/null 2>&1; then
-    log "Creating dedicated user '$dropbox_user'."
-    useradd -m -d "$dropbox_home" -U -s /bin/bash "$dropbox_user"
-  else
-    log "Using existing user '$dropbox_user'."
-  fi
-
-  script_target="$script_source"
-  if command -v runuser >/dev/null 2>&1; then
-    if ! runuser -u "$dropbox_user" -- test -r "$script_target" >/dev/null 2>&1; then
-      script_target="/tmp/install-codedrop-lxc.sh"
-      log "Copying installer to $script_target so '$dropbox_user' can execute it."
-      cp "$script_source" "$script_target"
-      chown "$dropbox_user":"$dropbox_user" "$script_target"
-      chmod 755 "$script_target"
-    fi
-
-    log "Re-running installer as '$dropbox_user'."
-    exec runuser -u "$dropbox_user" -- env \
-      CODEDROP_AS_USER=1 \
-      INSTALL_DROPBOX="${INSTALL_DROPBOX:-n}" \
-      DROPBOX_USER="$dropbox_user" \
-      HOME="$dropbox_home" \
-      LC_ALL=C \
-      bash "$script_target"
-  fi
-
-  script_target="/tmp/install-codedrop-lxc.sh"
-  log "runuser not found; using su. Copying installer to $script_target."
-  cp "$script_source" "$script_target"
-  chown "$dropbox_user":"$dropbox_user" "$script_target"
-  chmod 755 "$script_target"
-  exec su - "$dropbox_user" -c "CODEDROP_AS_USER=1 INSTALL_DROPBOX='${INSTALL_DROPBOX:-n}' DROPBOX_USER='$dropbox_user' LC_ALL=C bash '$script_target'"
 }
 
 trim() {
@@ -444,7 +449,7 @@ path_has_listable_entries() {
   local normalized
 
   probe_trimmed="${probe_path#/}"
-  mapfile -t probe_entries < <("$DROPBOX_CLI" ls "$probe_path" 2>/dev/null || true)
+  mapfile -t probe_entries < <(run_dropbox_cli ls "$probe_path" 2>/dev/null || true)
   [[ "${#probe_entries[@]}" -eq 0 ]] && return 1
 
   for name in "${probe_entries[@]}"; do
@@ -512,21 +517,13 @@ run_exclude_cmd() {
   local attempt
   local verify_try
   local target_user
-  local escaped_cli
-  local escaped_rel
 
   rel_path="${sync_path#/}"
   RUN_EXCLUDE_LAST_ERROR=""
   for attempt in 1 2 3 4 5; do
     target_user="${DROPBOX_USER:-$USER}"
     log "Running command: su - $target_user -c '$DROPBOX_CLI exclude $mode \"$rel_path\"'"
-    printf -v escaped_cli '%q' "$DROPBOX_CLI"
-    printf -v escaped_rel '%q' "$rel_path"
-    cmd_output="$(su - "$target_user" -c "$escaped_cli exclude $mode $escaped_rel" 2>&1 || true)"
-    if [[ -z "$cmd_output" && "$(id -un)" == "$target_user" ]]; then
-      # Fallback when su-to-self is restricted but we are already the target user.
-      cmd_output="$("$DROPBOX_CLI" exclude "$mode" "$rel_path" 2>&1 || true)"
-    fi
+    cmd_output="$(run_dropbox_cli exclude "$mode" "$rel_path" 2>&1 || true)"
     RUN_EXCLUDE_LAST_ERROR="$cmd_output"
     if [[ -n "$cmd_output" ]]; then
       if [[ "$cmd_output" == *"Excluded:"* || "$cmd_output" == *"Included:"* ]]; then
@@ -569,7 +566,7 @@ exclude_list_normalized() {
     norm="${norm#/}"
     [[ -z "$norm" ]] && continue
     printf '%s\n' "$norm"
-  done < <("$DROPBOX_CLI" exclude list 2>/dev/null || true)
+  done < <(run_dropbox_cli exclude list 2>/dev/null || true)
 }
 
 is_path_excluded() {
@@ -631,7 +628,7 @@ wait_for_dropbox_ready() {
 
   log "Waiting for Dropbox daemon to initialize..."
   while (( elapsed < max_wait )); do
-    status="$("$DROPBOX_CLI" status 2>/dev/null || true)"
+    status="$(run_dropbox_cli status 2>/dev/null || true)"
 
     case "$status" in
       *"Up to date"*|*"Syncing"*)
@@ -659,7 +656,7 @@ wait_for_dropbox_ready() {
     elapsed=$((elapsed + 2))
   done
 
-  log "Dropbox did not become ready in ${max_wait}s. Current status: $("$DROPBOX_CLI" status 2>/dev/null || true)"
+  log "Dropbox did not become ready in ${max_wait}s. Current status: $(run_dropbox_cli status 2>/dev/null || true)"
   return 1
 }
 
@@ -713,7 +710,7 @@ start_dropbox_daemon() {
   fi
 
   log "Starting Dropbox daemon in background."
-  nohup "$DROPBOX_DAEMON" >/tmp/codedrop-dropboxd.log 2>&1 &
+  run_as_local_user_shell "${DROPBOX_USER:-$LOCAL_USER}" "nohup $(printf '%q' "$DROPBOX_DAEMON") >/tmp/codedrop-dropboxd.log 2>&1 &"
   sleep 4
 
   if pgrep -f "$DROPBOX_DAEMON" >/dev/null 2>&1; then
@@ -721,7 +718,7 @@ start_dropbox_daemon() {
     return 0
   fi
 
-  status="$("$DROPBOX_CLI" status 2>&1 || true)"
+  status="$(run_dropbox_cli status 2>&1 || true)"
   if [[ "$status" == *"Starting..."* || "$status" == *"Up to date"* || "$status" == *"Syncing"* || "$status" == *"Connecting"* || "$status" == *"Downloading"* || "$status" == *"Indexing"* ]] || is_link_required_status "$status"; then
     log "Dropbox appears to be running (status check): ${status//$'\n'/ }"
     return 0
@@ -813,7 +810,7 @@ configure_selective_sync() {
     fi
     current_trimmed="${current_full#/}"
 
-    mapfile -t remote_entries < <("$DROPBOX_CLI" ls "$current_full" 2>/dev/null || true)
+    mapfile -t remote_entries < <(run_dropbox_cli ls "$current_full" 2>/dev/null || true)
     if [[ "${#remote_entries[@]}" -eq 0 ]]; then
       continue
     fi
@@ -888,7 +885,7 @@ configure_selective_sync() {
     return 2
   fi
 
-  if exclude_output="$("$DROPBOX_CLI" exclude list 2>/dev/null || true)"; then
+  if exclude_output="$(run_dropbox_cli exclude list 2>/dev/null || true)"; then
     while IFS= read -r exclude_line; do
       exclude_item="$(trim "$exclude_line")"
       [[ "$exclude_item" != /* ]] && continue
@@ -952,7 +949,7 @@ configure_selective_sync() {
     fi
   fi
 
-  final_exclude_output="$("$DROPBOX_CLI" exclude list 2>/dev/null || true)"
+  final_exclude_output="$(run_dropbox_cli exclude list 2>/dev/null || true)"
   if [[ "$exclude_attempts" -gt 0 && "$final_exclude_output" == *"No directories are being ignored."* ]]; then
     error "Selective sync issued exclude operations, but Dropbox reports no excluded directories. Verify with a relative path such as: '$DROPBOX_CLI exclude add \"${PREFIX_PATH#/}/Accounts\"'."
   fi
@@ -960,22 +957,18 @@ configure_selective_sync() {
   log "Selective sync configuration finished."
 }
 
-HOME_DIR="${HOME:-/root}"
-CONFIG_DIR="$HOME_DIR/.config/codedrop"
-ENV_FILE="$CONFIG_DIR/codedrop.env"
-DROPBOX_DIST_DIR="$HOME_DIR/.dropbox-dist"
-DROPBOX_DAEMON="$DROPBOX_DIST_DIR/dropboxd"
-DROPBOX_CLI="$HOME_DIR/.local/bin/dropbox"
+refresh_runtime_paths
 DROPBOX_DOWNLOAD_URL="https://www.dropbox.com/download?plat=lnx.x86_64"
 DROPBOX_CLI_URL="https://www.dropbox.com/download?dl=packages/dropbox.py"
 
 write_env_config() {
-  mkdir -p "$CONFIG_DIR"
-  cat > "$ENV_FILE" <<EOF
+  run_as_local_user_shell "$LOCAL_USER" "mkdir -p $(printf '%q' "$CONFIG_DIR")"
+  run_as_local_user_shell "$LOCAL_USER" "cat > $(printf '%q' "$ENV_FILE") <<'EOF'
 # Generated by install-codedrop-lxc.sh on $(date '+%Y-%m-%d %H:%M:%S')
 PREFIX_PATH=$PREFIX_PATH
 SYNC_FOLDERS=$SYNC_FOLDERS
 EOF
+"
 }
 
 if ! command -v apt-get >/dev/null 2>&1; then
@@ -983,15 +976,13 @@ if ! command -v apt-get >/dev/null 2>&1; then
 fi
 
 INSTALL_DROPBOX="${INSTALL_DROPBOX:-n}"
-if [[ "${CODEDROP_AS_USER:-}" != "1" ]]; then
-  if prompt_yes_no "Install Dropbox (headless daemon + selective sync)?" "${INSTALL_DROPBOX}"; then
-    INSTALL_DROPBOX="y"
-  else
-    INSTALL_DROPBOX="n"
-  fi
+if prompt_yes_no "Install Dropbox (headless daemon + selective sync)?" "${INSTALL_DROPBOX}"; then
+  INSTALL_DROPBOX="y"
+else
+  INSTALL_DROPBOX="n"
 fi
 
-if [[ "${EUID}" -eq 0 && "${CODEDROP_AS_USER:-}" != "1" ]]; then
+if [[ "${EUID}" -eq 0 ]]; then
   log "Installing minimal baseline packages."
   run_privileged apt-get update
   run_privileged env DEBIAN_FRONTEND=noninteractive apt-get install -y \
@@ -1014,7 +1005,31 @@ if [[ "${EUID}" -eq 0 && "${CODEDROP_AS_USER:-}" != "1" ]]; then
   if [[ "$INSTALL_DROPBOX" == "y" && -z "${DROPBOX_USER:-}" ]]; then
     prompt_for_dropbox_user
   fi
-  reexec_as_dropbox_user
+
+  if [[ -n "${DROPBOX_USER:-}" ]]; then
+    LOCAL_USER="$DROPBOX_USER"
+  fi
+  if [[ -z "${LOCAL_USER:-}" || "$LOCAL_USER" == "root" ]]; then
+    LOCAL_USER="$(prompt "LOCAL_USER (linux username for user-scoped install steps)" "${SUDO_USER:-}")"
+    LOCAL_USER="$(trim "$LOCAL_USER")"
+    if [[ -z "$LOCAL_USER" ]]; then
+      error "LOCAL_USER cannot be empty when running installer as root."
+    fi
+  fi
+  if ! is_valid_unix_username "$LOCAL_USER"; then
+    error "Invalid LOCAL_USER '$LOCAL_USER'."
+  fi
+
+  if ! id -u "$LOCAL_USER" >/dev/null 2>&1; then
+    LOCAL_HOME="/home/$LOCAL_USER"
+    log "Creating user '$LOCAL_USER' for user-scoped install steps."
+    useradd -m -d "$LOCAL_HOME" -U -s /bin/bash "$LOCAL_USER"
+  fi
+
+  LOCAL_HOME="$(resolve_user_home "$LOCAL_USER")"
+  DROPBOX_USER="${DROPBOX_USER:-$LOCAL_USER}"
+  refresh_runtime_paths
+  log "Running in root mode. User-scoped commands will run as '$LOCAL_USER'."
 fi
 
 if [[ "$INSTALL_DROPBOX" == "y" ]]; then
@@ -1030,7 +1045,7 @@ if [[ "$INSTALL_DROPBOX" == "y" ]]; then
 fi
 
 INSTALL_CODE_SERVER="n"
-if prompt_yes_no "Install code-server for user '$USER'?" "n"; then
+if prompt_yes_no "Install code-server for user '$LOCAL_USER'?" "n"; then
   INSTALL_CODE_SERVER="y"
 fi
 if [[ "$INSTALL_CODE_SERVER" == "y" ]]; then
@@ -1040,7 +1055,7 @@ else
 fi
 
 INSTALL_CLAUDE_CODE="n"
-if prompt_yes_no "Install Claude Code for user '$USER'?" "n"; then
+if prompt_yes_no "Install Claude Code for user '$LOCAL_USER'?" "n"; then
   INSTALL_CLAUDE_CODE="y"
 fi
 if [[ "$INSTALL_CLAUDE_CODE" == "y" ]]; then
@@ -1050,7 +1065,7 @@ else
 fi
 
 INSTALL_CODEX_EXTENSION="n"
-if prompt_yes_no "Install Codex extension in code-server for user '$USER'?" "n"; then
+if prompt_yes_no "Install Codex extension in code-server for user '$LOCAL_USER'?" "n"; then
   INSTALL_CODEX_EXTENSION="y"
 fi
 if [[ "$INSTALL_CODEX_EXTENSION" == "y" ]]; then
@@ -1065,7 +1080,7 @@ else
 fi
 
 INSTALL_PYTHON_EXTENSION="n"
-if prompt_yes_no "Enable Python support in code-server for user '$USER'?" "n"; then
+if prompt_yes_no "Enable Python support in code-server for user '$LOCAL_USER'?" "n"; then
   INSTALL_PYTHON_EXTENSION="y"
 fi
 if [[ "$INSTALL_PYTHON_EXTENSION" == "y" ]]; then
@@ -1075,7 +1090,7 @@ else
 fi
 
 INSTALL_LATEX_SUPPORT="n"
-if prompt_yes_no "Enable LaTeX formatting in code-server for user '$USER'?" "n"; then
+if prompt_yes_no "Enable LaTeX formatting in code-server for user '$LOCAL_USER'?" "n"; then
   INSTALL_LATEX_SUPPORT="y"
 fi
 if [[ "$INSTALL_LATEX_SUPPORT" == "y" ]]; then
@@ -1087,7 +1102,7 @@ fi
 download_update_script_as_user
 
 if [[ "$INSTALL_DROPBOX" == "y" ]]; then
-  mkdir -p "$CONFIG_DIR" "$HOME_DIR/.local/bin"
+  run_as_local_user_shell "$LOCAL_USER" "mkdir -p $(printf '%q' "$CONFIG_DIR") $(printf '%q' "$HOME_DIR/.local/bin")"
 
   write_env_config
 
@@ -1102,19 +1117,19 @@ if [[ "$INSTALL_DROPBOX" == "y" ]]; then
     log "Installing Dropbox headless daemon to $DROPBOX_DIST_DIR"
     TMP_TAR="$(mktemp)"
     wget -qO "$TMP_TAR" "$DROPBOX_DOWNLOAD_URL"
-    tar -xzf "$TMP_TAR" -C "$HOME_DIR"
+    run_as_local_user "$LOCAL_USER" tar -xzf "$TMP_TAR" -C "$HOME_DIR"
     rm -f "$TMP_TAR"
   fi
 
   if [[ ! -f "$DROPBOX_CLI" ]]; then
     log "Installing Dropbox CLI to $DROPBOX_CLI"
-    wget -qO "$DROPBOX_CLI" "$DROPBOX_CLI_URL"
-    chmod +x "$DROPBOX_CLI"
+    run_as_local_user_shell "$LOCAL_USER" "wget -qO $(printf '%q' "$DROPBOX_CLI") $(printf '%q' "$DROPBOX_CLI_URL")"
+    run_as_local_user_shell "$LOCAL_USER" "chmod +x $(printf '%q' "$DROPBOX_CLI")"
   fi
 
   start_dropbox_daemon
 
-  status_out="$("$DROPBOX_CLI" status 2>&1 || true)"
+  status_out="$(run_dropbox_cli status 2>&1 || true)"
   if is_link_required_status "$status_out"; then
     link_url="$(extract_link_url "$status_out")"
     cat <<EOF
@@ -1133,15 +1148,14 @@ Run this command to get the pairing URL:
 EOF
     fi
     cat <<EOF
+SCRIPT_MARKER: salmas
 
 After linking completes, re-run this installer to apply selective sync using:
   PREFIX_PATH=$PREFIX_PATH
   SYNC_FOLDERS=$SYNC_FOLDERS
 
 Or apply selective sync directly with:
-  $HOME/.local/bin/update-codedrop-sync-lxc.sh
-
-SCRIPT_MARKER: meow
+  $HOME_DIR/.local/bin/update-codedrop-sync-lxc.sh
 
 EOF
     exit 0
@@ -1158,6 +1172,7 @@ EOF
     wait_rc=$?
     if [[ "$wait_rc" -eq 10 ]]; then
       cat <<EOF
+SCRIPT_MARKER: salmas
 
 Dropbox needs linking before selective sync can be applied.
 Run:
@@ -1166,9 +1181,7 @@ Run:
 After linking completes, re-run this installer.
 
 Or apply selective sync directly with:
-  $HOME/.local/bin/update-codedrop-sync-lxc.sh
-
-SCRIPT_MARKER: meow
+  $HOME_DIR/.local/bin/update-codedrop-sync-lxc.sh
 
 EOF
       exit 0
@@ -1179,6 +1192,7 @@ EOF
   fi
 
   cat <<EOF
+SCRIPT_MARKER: salmas
 
 Install complete (headless Dropbox, no Docker).
 
@@ -1198,22 +1212,19 @@ Useful commands:
   $DROPBOX_CLI exclude list
   $DROPBOX_CLI start
   $DROPBOX_CLI stop
-  $HOME/.local/bin/update-codedrop-sync-lxc.sh
-
-SCRIPT_MARKER: meow
+  $HOME_DIR/.local/bin/update-codedrop-sync-lxc.sh
 
 EOF
 else
   cat <<EOF
+SCRIPT_MARKER: salmas
 
 Install complete.
 
 Dropbox installation was skipped by choice.
 Re-run this installer any time and answer "yes" to install Dropbox later.
 Update helper script is available at:
-  $HOME/.local/bin/update-codedrop-sync-lxc.sh
-
-SCRIPT_MARKER: meow
+  $HOME_DIR/.local/bin/update-codedrop-sync-lxc.sh
 
 EOF
 fi
