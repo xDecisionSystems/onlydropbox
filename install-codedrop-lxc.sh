@@ -997,7 +997,7 @@ Run this command to get the pairing URL:
 EOF
     fi
     cat <<EOF
-SCRIPT_MARKER: nolatex
+SCRIPT_MARKER: code-server-user
 
 After linking completes, re-run this installer to apply selective sync using:
   PREFIX_PATH=$PREFIX_PATH
@@ -1014,7 +1014,7 @@ EOF
     wait_rc=$?
     if [[ "$wait_rc" -eq 10 ]]; then
       cat <<EOF
-SCRIPT_MARKER: nolatex
+SCRIPT_MARKER: code-server-user
 
 Dropbox needs linking before selective sync can be applied.
 Run:
@@ -1049,7 +1049,7 @@ if [[ "${EUID}" -ne 0 ]]; then
 fi
 
 INSTALL_DROPBOX="${INSTALL_DROPBOX:-n}"
-printf 'SCRIPT_MARKER: nolatex\n'
+printf 'SCRIPT_MARKER: code-server-user\n'
 if prompt_yes_no "Install/keep Dropbox (headless daemon + selective sync)?" "${INSTALL_DROPBOX}"; then
   INSTALL_DROPBOX="y"
 else
@@ -1131,7 +1131,7 @@ if [[ "$INSTALL_DROPBOX" == "y" ]]; then
 fi
 
 INSTALL_CODE_SERVER="n"
-if prompt_yes_no "Install code-server for user '$LOCAL_USER'?" "n"; then
+if prompt_yes_no "Install/keep code-server (system-wide)?" "n"; then
   INSTALL_CODE_SERVER="y"
 fi
 if [[ "$INSTALL_CODE_SERVER" == "y" ]]; then
@@ -1176,7 +1176,7 @@ download_update_script_as_user
 
 if [[ "$INSTALL_DROPBOX" == "y" ]]; then
   cat <<EOF
-SCRIPT_MARKER: nolatex
+SCRIPT_MARKER: code-server-user
 
 Install complete (headless Dropbox, no Docker).
 
@@ -1201,7 +1201,7 @@ Useful commands:
 EOF
 else
   cat <<EOF
-SCRIPT_MARKER: nolatex
+SCRIPT_MARKER: code-server-user
 
 Install complete.
 
