@@ -270,6 +270,7 @@ configure_selective_sync() {
   local rel_path_raw
   local full_path
   local -a remote_entries
+  local saw_valid_entry=0
   local exclude_line
   local exclude_item
   local exclude_output
@@ -304,6 +305,9 @@ configure_selective_sync() {
     for name in "${remote_entries[@]}"; do
       normalized="${name%/}"
       normalized="${normalized#/}"
+      if [[ "$normalized" == *" (File doesn't exist!)" ]]; then
+        continue
+      fi
       if [[ -n "$current_trimmed" && "$current_trimmed" != "/" ]]; then
         if [[ "$normalized" == "$current_trimmed/"* ]]; then
           normalized="${normalized#"$current_trimmed"/}"
@@ -312,6 +316,7 @@ configure_selective_sync() {
         fi
       fi
       [[ -z "$normalized" ]] && continue
+      saw_valid_entry=1
 
       if [[ -z "$current_rel" ]]; then
         rel_path_raw="$normalized"
@@ -344,6 +349,11 @@ configure_selective_sync() {
       fi
     done
   done
+
+  if [[ "$saw_valid_entry" -eq 0 ]]; then
+    log "No listable entries found under ${PREFIX_PATH_NORMALIZED}. Verify PREFIX_PATH with: $DROPBOX_CLI ls \"$PREFIX_PATH_NORMALIZED\""
+    return 0
+  fi
 
   if exclude_output="$("$DROPBOX_CLI" exclude list 2>/dev/null || true)"; then
     while IFS= read -r exclude_line; do
