@@ -156,6 +156,20 @@ install_code_server_as_user() {
   run_privileged sh -c 'curl -fsSL https://code-server.dev/install.sh | sh'
 }
 
+install_tailscale_as_root() {
+  if command -v tailscale >/dev/null 2>&1; then
+    log "Tailscale is already installed."
+    return 0
+  fi
+
+  if ! command -v curl >/dev/null 2>&1; then
+    error "curl is required to install Tailscale."
+  fi
+
+  log "Installing Tailscale."
+  run_privileged sh -c 'curl -fsSL https://tailscale.com/install.sh | sh'
+}
+
 install_claude_code_as_user() {
   local claude_extension_id="anthropic.claude-code"
 
@@ -1050,6 +1064,16 @@ run_privileged env DEBIAN_FRONTEND=noninteractive apt-get install -y \
   tar \
   python3 \
   procps
+
+INSTALL_TAILSCALE="n"
+if command -v tailscale >/dev/null 2>&1; then
+  log "Tailscale is already installed; skipping Tailscale prompt."
+elif prompt_yes_no "Install Tailscale?" "n"; then
+  INSTALL_TAILSCALE="y"
+fi
+if [[ "$INSTALL_TAILSCALE" == "y" ]]; then
+  install_tailscale_as_root
+fi
 
 if [[ "$INSTALL_DROPBOX" == "y" ]]; then
   log "Installing Dropbox prerequisites."
