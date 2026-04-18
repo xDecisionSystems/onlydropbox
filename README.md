@@ -87,7 +87,11 @@ When Dropbox install is selected, the installer:
 - prompts for `DROPBOX_USER`
 - creates/reuses that user
 - runs Dropbox as that user (not root)
-- prompts for `PREFIX_PATH` and `SYNC_FOLDERS`
+- prompts for `ACCOUNT_TYPE` (`personal` or `organization`)
+- prompts for `ACCOUNT_ROOT` (for example `Dropbox` or `UCF Dropbox`)
+- prompts for `ACCOUNT_NAME` (for example `Adan Vela`)
+- prompts for optional `ACCOUNT_SUBPATH`
+- builds `PREFIX_PATH` from account prompts, then prompts for `SYNC_FOLDERS`
 - saves config to `~/.config/codedrop/codedrop.env`
 - uses existing values from that file as defaults on future runs
 - starts Dropbox and applies selective sync

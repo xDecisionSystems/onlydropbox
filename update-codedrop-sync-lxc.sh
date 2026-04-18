@@ -120,6 +120,79 @@ read_config_value() {
   printf '%s' "${line#*=}"
 }
 
+split_prefix_components() {
+  local raw="$1"
+  local trimmed
+
+  trimmed="$(trim "$raw")"
+  trimmed="${trimmed#/}"
+  trimmed="${trimmed%/}"
+
+  EXISTING_ACCOUNT_ROOT=""
+  EXISTING_ACCOUNT_NAME=""
+  EXISTING_ACCOUNT_SUBPATH=""
+
+  [[ -z "$trimmed" ]] && return 0
+
+  IFS='/' read -r EXISTING_ACCOUNT_ROOT EXISTING_ACCOUNT_NAME EXISTING_ACCOUNT_SUBPATH <<< "$trimmed"
+}
+
+prompt_for_prefix_path() {
+  local existing_prefix="$1"
+  local account_type_default="personal"
+  local account_type
+  local account_root_default
+  local account_root
+  local account_name
+  local account_name_default
+  local account_subpath
+
+  split_prefix_components "$existing_prefix"
+
+  if [[ -n "$EXISTING_ACCOUNT_ROOT" && "$EXISTING_ACCOUNT_ROOT" != "Dropbox" ]]; then
+    account_type_default="organization"
+  fi
+
+  while true; do
+    account_type="$(prompt "ACCOUNT_TYPE (personal/organization)" "$account_type_default")"
+    account_type="$(trim "${account_type,,}")"
+    case "$account_type" in
+      personal|organization) break ;;
+      *) log "Please enter 'personal' or 'organization'." ;;
+    esac
+  done
+
+  if [[ "$account_type" == "personal" ]]; then
+    account_root_default="Dropbox"
+  else
+    account_root_default="${EXISTING_ACCOUNT_ROOT:-UCF Dropbox}"
+  fi
+
+  account_root="$(prompt "ACCOUNT_ROOT (e.g. Dropbox or UCF Dropbox)" "$account_root_default")"
+  account_root="$(trim "$account_root")"
+  [[ -z "$account_root" ]] && error "ACCOUNT_ROOT cannot be empty."
+
+  account_name_default="${EXISTING_ACCOUNT_NAME:-${DROPBOX_USER:-$USER}}"
+  account_name="$(prompt "ACCOUNT_NAME (e.g. Adan Vela)" "$account_name_default")"
+  account_name="$(trim "$account_name")"
+  [[ -z "$account_name" ]] && error "ACCOUNT_NAME cannot be empty."
+
+  account_subpath="$(prompt "ACCOUNT_SUBPATH (optional path under account folder)" "${EXISTING_ACCOUNT_SUBPATH:-}")"
+  account_subpath="$(trim "$account_subpath")"
+  account_subpath="${account_subpath#/}"
+  account_subpath="${account_subpath%/}"
+
+  PREFIX_PATH="$account_root/$account_name"
+  if [[ -n "$account_subpath" ]]; then
+    PREFIX_PATH="$PREFIX_PATH/$account_subpath"
+  fi
+
+  while [[ "$PREFIX_PATH" == *"//"* ]]; do
+    PREFIX_PATH="${PREFIX_PATH//\/\//\/}"
+  done
+  PREFIX_PATH="${PREFIX_PATH#/}"
+}
+
 normalize_prefix_path() {
   local raw="${PREFIX_PATH:-/}"
   raw="$(trim "$raw")"
@@ -395,8 +468,8 @@ if [[ -f "$ENV_FILE" ]]; then
   existing_sync="$(read_config_value "SYNC_FOLDERS" "$ENV_FILE")"
 fi
 
-PREFIX_PATH="$(prompt "PREFIX_PATH (Dropbox base path)" "${existing_prefix:-/}")"
-SYNC_FOLDERS="$(prompt "SYNC_FOLDERS (comma-separated first-level folders to sync; empty = unchanged)" "${existing_sync:-}")"
+prompt_for_prefix_path "${existing_prefix:-/}"
+SYNC_FOLDERS="$(prompt "SYNC_FOLDERS (comma-separated relative folder paths to sync; empty = unchanged)" "${existing_sync:-}")"
 
 PREFIX_PATH="$(trim "$PREFIX_PATH")"
 SYNC_FOLDERS="$(trim "$SYNC_FOLDERS")"
