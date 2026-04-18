@@ -519,6 +519,22 @@ run_exclude_cmd() {
   return 1
 }
 
+exclude_list_normalized() {
+  local line
+  local norm
+
+  while IFS= read -r line; do
+    line="$(trim "$line")"
+    [[ -z "$line" ]] && continue
+    [[ "$line" == "Excluded:" ]] && continue
+    [[ "$line" == "No directories are being ignored." ]] && continue
+    norm="${line%/}"
+    norm="${norm#/}"
+    [[ -z "$norm" ]] && continue
+    printf '%s\n' "$norm"
+  done < <("$DROPBOX_CLI" exclude list 2>/dev/null || true)
+}
+
 parse_sync_folders() {
   local raw="${SYNC_FOLDERS:-}"
   local token
@@ -699,9 +715,14 @@ configure_selective_sync() {
   local exclude_item
   local exclude_output
   local final_exclude_output
+  local expected_rel
   local action_failures=0
   local fallback_prefix=""
   local exclude_attempts=0
+  local -a expected_excludes=()
+  local -a excluded_now=()
+  local -a missing_excludes=()
+  local -A excluded_map=()
 
   if ! path_has_listable_entries "$PREFIX_PATH_LS_NORMALIZED"; then
     fallback_prefix="$(nearest_listable_nonroot_parent "$PREFIX_PATH_LS_NORMALIZED" || true)"
@@ -799,6 +820,8 @@ configure_selective_sync() {
       else
         log "Excluding ${full_path}"
         exclude_attempts=$((exclude_attempts + 1))
+        expected_rel="${full_path#/}"
+        expected_excludes+=("$expected_rel")
         if ! run_exclude_cmd add "${full_path}"; then
           log "Failed to exclude ${full_path} (dropbox exclude add)."
           action_failures=$((action_failures + 1))
@@ -839,6 +862,46 @@ configure_selective_sync() {
 
   if [[ "$action_failures" -gt 0 ]]; then
     error "Selective sync encountered ${action_failures} Dropbox CLI command failure(s)."
+  fi
+
+  if [[ "${#expected_excludes[@]}" -gt 0 ]]; then
+    mapfile -t excluded_now < <(exclude_list_normalized)
+    excluded_map=()
+    for normalized in "${excluded_now[@]:-}"; do
+      excluded_map["$normalized"]=1
+    done
+
+    missing_excludes=()
+    for expected_rel in "${expected_excludes[@]}"; do
+      if [[ -z "${excluded_map[$expected_rel]:-}" ]]; then
+        missing_excludes+=("$expected_rel")
+      fi
+    done
+
+    if [[ "${#missing_excludes[@]}" -gt 0 ]]; then
+      log "Retrying ${#missing_excludes[@]} missing exclude entries reported absent from Dropbox state."
+      for expected_rel in "${missing_excludes[@]}"; do
+        run_exclude_cmd add "$expected_rel" >/dev/null 2>&1 || true
+      done
+      sleep 1
+
+      mapfile -t excluded_now < <(exclude_list_normalized)
+      excluded_map=()
+      for normalized in "${excluded_now[@]:-}"; do
+        excluded_map["$normalized"]=1
+      done
+
+      missing_excludes=()
+      for expected_rel in "${expected_excludes[@]}"; do
+        if [[ -z "${excluded_map[$expected_rel]:-}" ]]; then
+          missing_excludes+=("$expected_rel")
+        fi
+      done
+
+      if [[ "${#missing_excludes[@]}" -gt 0 ]]; then
+        error "Dropbox did not persist ${#missing_excludes[@]} exclude entries (first: ${missing_excludes[0]})."
+      fi
+    fi
   fi
 
   final_exclude_output="$("$DROPBOX_CLI" exclude list 2>/dev/null || true)"
