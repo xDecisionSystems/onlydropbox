@@ -511,11 +511,22 @@ run_exclude_cmd() {
   local cmd_output
   local attempt
   local verify_try
+  local target_user
+  local escaped_cli
+  local escaped_rel
 
   rel_path="${sync_path#/}"
   RUN_EXCLUDE_LAST_ERROR=""
   for attempt in 1 2 3 4 5; do
-    cmd_output="$("$DROPBOX_CLI" exclude "$mode" "$rel_path" 2>&1 || true)"
+    target_user="${DROPBOX_USER:-$USER}"
+    log "Running command: su - $target_user -c '$DROPBOX_CLI exclude $mode \"$rel_path\"'"
+    printf -v escaped_cli '%q' "$DROPBOX_CLI"
+    printf -v escaped_rel '%q' "$rel_path"
+    cmd_output="$(su - "$target_user" -c "$escaped_cli exclude $mode $escaped_rel" 2>&1 || true)"
+    if [[ -z "$cmd_output" && "$(id -un)" == "$target_user" ]]; then
+      # Fallback when su-to-self is restricted but we are already the target user.
+      cmd_output="$("$DROPBOX_CLI" exclude "$mode" "$rel_path" 2>&1 || true)"
+    fi
     RUN_EXCLUDE_LAST_ERROR="$cmd_output"
     if [[ -n "$cmd_output" ]]; then
       if [[ "$cmd_output" == *"Excluded:"* || "$cmd_output" == *"Included:"* ]]; then
@@ -1130,7 +1141,7 @@ After linking completes, re-run this installer to apply selective sync using:
 Or apply selective sync directly with:
   $HOME/.local/bin/update-codedrop-sync-lxc.sh
 
-SCRIPT_MARKER: catmug
+SCRIPT_MARKER: meow
 
 EOF
     exit 0
@@ -1157,7 +1168,7 @@ After linking completes, re-run this installer.
 Or apply selective sync directly with:
   $HOME/.local/bin/update-codedrop-sync-lxc.sh
 
-SCRIPT_MARKER: catmug
+SCRIPT_MARKER: meow
 
 EOF
       exit 0
@@ -1189,7 +1200,7 @@ Useful commands:
   $DROPBOX_CLI stop
   $HOME/.local/bin/update-codedrop-sync-lxc.sh
 
-SCRIPT_MARKER: catmug
+SCRIPT_MARKER: meow
 
 EOF
 else
@@ -1202,7 +1213,7 @@ Re-run this installer any time and answer "yes" to install Dropbox later.
 Update helper script is available at:
   $HOME/.local/bin/update-codedrop-sync-lxc.sh
 
-SCRIPT_MARKER: catmug
+SCRIPT_MARKER: meow
 
 EOF
 fi

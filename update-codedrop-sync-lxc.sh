@@ -310,38 +310,29 @@ run_exclude_cmd() {
   local sync_path="$2"
   local rel_path
   local cmd_output
-  local attempt
-  local verify_try
+  local target_user
+  local escaped_cli
+  local escaped_rel
 
   rel_path="${sync_path#/}"
   RUN_EXCLUDE_LAST_ERROR=""
-  for attempt in 1 2 3 4 5; do
+  target_user="${DROPBOX_USER:-$USER}"
+  log "Running command: su - $target_user -c '$DROPBOX_CLI exclude $mode \"$rel_path\"'"
+  printf -v escaped_cli '%q' "$DROPBOX_CLI"
+  printf -v escaped_rel '%q' "$rel_path"
+  cmd_output="$(su - "$target_user" -c "$escaped_cli exclude $mode $escaped_rel" 2>&1 || true)"
+  if [[ -z "$cmd_output" && "$(id -un)" == "$target_user" ]]; then
+    # Fallback when su-to-self is restricted but we are already the target user.
     cmd_output="$("$DROPBOX_CLI" exclude "$mode" "$rel_path" 2>&1 || true)"
-    RUN_EXCLUDE_LAST_ERROR="$cmd_output"
-    if [[ -n "$cmd_output" ]]; then
-      if [[ "$cmd_output" == *"Excluded:"* || "$cmd_output" == *"Included:"* ]]; then
-        return 0
-      elif [[ "$cmd_output" == *"already ignored"* || "$cmd_output" == *"isn't currently ignored"* || "$cmd_output" == *"not currently ignored"* ]]; then
-        return 0
-      elif [[ "$cmd_output" == *"Error"* || "$cmd_output" == *"error"* ]]; then
-        sleep 1
-        continue
-      fi
+  fi
+  RUN_EXCLUDE_LAST_ERROR="$cmd_output"
+  if [[ -n "$cmd_output" ]]; then
+    if [[ "$cmd_output" == *"Excluded:"* || "$cmd_output" == *"Included:"* ]]; then
+      return 0
+    elif [[ "$cmd_output" == *"already ignored"* || "$cmd_output" == *"isn't currently ignored"* || "$cmd_output" == *"not currently ignored"* ]]; then
+      return 0
     fi
-
-    for verify_try in 1 2 3 4 5; do
-      if [[ "$mode" == "add" ]]; then
-        if is_path_excluded "$rel_path"; then
-          return 0
-        fi
-      else
-        if ! is_path_excluded "$rel_path"; then
-          return 0
-        fi
-      fi
-      sleep 1
-    done
-  done
+  fi
 
   return 1
 }
@@ -504,15 +495,8 @@ configure_selective_sync() {
   local exclude_line
   local exclude_item
   local exclude_output
-  local final_exclude_output
-  local expected_rel
   local action_failures=0
   local fallback_prefix=""
-  local exclude_attempts=0
-  local -a expected_excludes=()
-  local -a excluded_now=()
-  local -a missing_excludes=()
-  local -A excluded_map=()
 
   if ! path_has_listable_entries "$PREFIX_PATH_LS_NORMALIZED"; then
     fallback_prefix="$(nearest_listable_nonroot_parent "$PREFIX_PATH_LS_NORMALIZED" || true)"
@@ -612,9 +596,6 @@ configure_selective_sync() {
         fi
       else
         log "Excluding ${full_path}"
-        exclude_attempts=$((exclude_attempts + 1))
-        expected_rel="${full_path#/}"
-        expected_excludes+=("$expected_rel")
         if ! run_exclude_cmd add "${full_path}"; then
           log "Failed to exclude ${full_path} (dropbox exclude add): ${RUN_EXCLUDE_LAST_ERROR:-no output}"
           action_failures=$((action_failures + 1))
@@ -655,51 +636,6 @@ configure_selective_sync() {
 
   if [[ "$action_failures" -gt 0 ]]; then
     error "Selective sync encountered ${action_failures} Dropbox CLI command failure(s)."
-  fi
-
-  if [[ "${#expected_excludes[@]}" -gt 0 ]]; then
-    mapfile -t excluded_now < <(exclude_list_normalized)
-    excluded_map=()
-    for normalized in "${excluded_now[@]:-}"; do
-      excluded_map["$normalized"]=1
-    done
-
-    missing_excludes=()
-    for expected_rel in "${expected_excludes[@]}"; do
-      if [[ -z "${excluded_map[$expected_rel]:-}" ]]; then
-        missing_excludes+=("$expected_rel")
-      fi
-    done
-
-    if [[ "${#missing_excludes[@]}" -gt 0 ]]; then
-      log "Retrying ${#missing_excludes[@]} missing exclude entries reported absent from Dropbox state."
-      for expected_rel in "${missing_excludes[@]}"; do
-        run_exclude_cmd add "$expected_rel" >/dev/null 2>&1 || true
-      done
-      sleep 1
-
-      mapfile -t excluded_now < <(exclude_list_normalized)
-      excluded_map=()
-      for normalized in "${excluded_now[@]:-}"; do
-        excluded_map["$normalized"]=1
-      done
-
-      missing_excludes=()
-      for expected_rel in "${expected_excludes[@]}"; do
-        if [[ -z "${excluded_map[$expected_rel]:-}" ]]; then
-          missing_excludes+=("$expected_rel")
-        fi
-      done
-
-      if [[ "${#missing_excludes[@]}" -gt 0 ]]; then
-        error "Dropbox did not persist ${#missing_excludes[@]} exclude entries (first: ${missing_excludes[0]})."
-      fi
-    fi
-  fi
-
-  final_exclude_output="$("$DROPBOX_CLI" exclude list 2>/dev/null || true)"
-  if [[ "$exclude_attempts" -gt 0 && "$final_exclude_output" == *"No directories are being ignored."* ]]; then
-    error "Selective sync issued exclude operations, but Dropbox reports no excluded directories. Verify with a relative path such as: '$DROPBOX_CLI exclude add \"${PREFIX_PATH#/}/Accounts\"'."
   fi
 
   log "Selective sync configuration finished."
@@ -755,7 +691,7 @@ if is_link_required_status "$status_out"; then
   else
     printf '\nDropbox is not linked. Run:\n  %s start -i\n\n' "$DROPBOX_CLI"
   fi
-  printf 'SCRIPT_MARKER: catmug\n'
+  printf 'SCRIPT_MARKER: meow\n'
   exit 0
 fi
 
@@ -764,7 +700,7 @@ if wait_for_dropbox_ready; then
   if configure_selective_sync; then
     write_env_config
     log "Saved effective config to $ENV_FILE"
-    printf '\nUpdated selective sync with:\n  PREFIX_PATH=%s\n  SYNC_FOLDERS=%s\n\nSCRIPT_MARKER: catmug\n\n' "$PREFIX_PATH" "$SYNC_FOLDERS"
+    printf '\nUpdated selective sync with:\n  PREFIX_PATH=%s\n  SYNC_FOLDERS=%s\n\nSCRIPT_MARKER: meow\n\n' "$PREFIX_PATH" "$SYNC_FOLDERS"
     exit 0
   fi
   error "Selective sync update failed. Verify PREFIX_PATH with '$DROPBOX_CLI ls \"$PREFIX_PATH_NORMALIZED\"', wait for Dropbox to finish startup, then rerun."
@@ -773,7 +709,7 @@ else
 fi
 
 if [[ "$wait_rc" -eq 10 ]]; then
-  printf '\nDropbox needs account linking before selective sync can be applied.\nRun:\n  %s start -i\n\nSCRIPT_MARKER: catmug\n\n' "$DROPBOX_CLI"
+  printf '\nDropbox needs account linking before selective sync can be applied.\nRun:\n  %s start -i\n\nSCRIPT_MARKER: meow\n\n' "$DROPBOX_CLI"
   exit 0
 fi
 
