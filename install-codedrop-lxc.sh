@@ -999,7 +999,7 @@ Run this command to get the pairing URL:
 EOF
     fi
     cat <<EOF
-SCRIPT_MARKER: tailscale
+SCRIPT_MARKER: stream
 
 After linking completes, re-run this installer to apply selective sync using:
   PREFIX_PATH=$PREFIX_PATH
@@ -1016,7 +1016,7 @@ EOF
     wait_rc=$?
     if [[ "$wait_rc" -eq 10 ]]; then
       cat <<EOF
-SCRIPT_MARKER: tailscale
+SCRIPT_MARKER: stream
 
 Dropbox needs linking before selective sync can be applied.
 Run:
@@ -1051,7 +1051,7 @@ if [[ "${EUID}" -ne 0 ]]; then
 fi
 
 INSTALL_DROPBOX="${INSTALL_DROPBOX:-n}"
-printf 'SCRIPT_MARKER: tailscale\n'
+printf 'SCRIPT_MARKER: stream\n'
 if prompt_yes_no "Install/keep Dropbox (headless daemon + selective sync)?" "${INSTALL_DROPBOX}"; then
   INSTALL_DROPBOX="y"
 else
@@ -1176,7 +1176,7 @@ download_update_script_as_user
 
 if [[ "$INSTALL_DROPBOX" == "y" ]]; then
   cat <<EOF
-SCRIPT_MARKER: tailscale
+SCRIPT_MARKER: stream
 
 Install complete (headless Dropbox, no Docker).
 
@@ -1204,7 +1204,7 @@ If you installed Tailscale, bring it online with:
 EOF
 else
   cat <<EOF
-SCRIPT_MARKER: tailscale
+SCRIPT_MARKER: stream
 
 Install complete.
 
