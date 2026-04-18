@@ -395,17 +395,84 @@ prompt_for_prefix_path() {
 }
 
 normalize_prefix_path() {
-  local raw="${PREFIX_PATH:-/}"
+  local raw="${PREFIX_PATH:-}"
   raw="$(trim "$raw")"
+  [[ -z "$raw" ]] && raw="/"
 
-  if [[ -z "$raw" || "$raw" == "/" ]]; then
-    PREFIX_PATH_NORMALIZED="/"
-    return
+  if [[ "$raw" == "/" ]]; then
+    PREFIX_PATH_NORMALIZED="$HOME_DIR"
+  elif [[ "$raw" == /* ]]; then
+    PREFIX_PATH_NORMALIZED="${raw%/}"
+    [[ -z "$PREFIX_PATH_NORMALIZED" ]] && PREFIX_PATH_NORMALIZED="/"
+  else
+    raw="${raw#/}"
+    raw="${raw%/}"
+    PREFIX_PATH_NORMALIZED="$HOME_DIR/$raw"
   fi
 
-  raw="${raw#/}"
-  raw="${raw%/}"
-  PREFIX_PATH_NORMALIZED="/$raw"
+  while [[ "$PREFIX_PATH_NORMALIZED" == *"//"* ]]; do
+    PREFIX_PATH_NORMALIZED="${PREFIX_PATH_NORMALIZED//\/\//\/}"
+  done
+}
+
+update_prefix_path_from_normalized() {
+  if [[ "$PREFIX_PATH_NORMALIZED" == "$HOME_DIR" ]]; then
+    PREFIX_PATH="/"
+  elif [[ "$PREFIX_PATH_NORMALIZED" == "$HOME_DIR/"* ]]; then
+    PREFIX_PATH="${PREFIX_PATH_NORMALIZED#"$HOME_DIR"/}"
+  else
+    PREFIX_PATH="$PREFIX_PATH_NORMALIZED"
+  fi
+}
+
+path_has_listable_entries() {
+  local probe_path="$1"
+  local probe_trimmed
+  local -a probe_entries
+  local name
+  local normalized
+
+  probe_trimmed="${probe_path#/}"
+  mapfile -t probe_entries < <("$DROPBOX_CLI" ls "$probe_path" 2>/dev/null || true)
+  [[ "${#probe_entries[@]}" -eq 0 ]] && return 1
+
+  for name in "${probe_entries[@]}"; do
+    normalized="${name%/}"
+    normalized="${normalized#/}"
+    if [[ "$normalized" == *" (File doesn't exist!)" ]]; then
+      continue
+    fi
+    if [[ -n "$probe_trimmed" && "$probe_trimmed" != "/" ]]; then
+      if [[ "$normalized" == "$probe_trimmed/"* ]]; then
+        normalized="${normalized#"$probe_trimmed"/}"
+      elif [[ "$normalized" == "$probe_trimmed" ]]; then
+        normalized=""
+      fi
+    fi
+    [[ -n "$normalized" ]] && return 0
+  done
+
+  return 1
+}
+
+nearest_listable_nonroot_parent() {
+  local probe="$1"
+  local parent
+
+  while [[ "$probe" != "/" ]]; do
+    parent="${probe%/*}"
+    [[ -z "$parent" ]] && parent="/"
+    if [[ "$parent" != "/" ]] && path_has_listable_entries "$parent"; then
+      printf '%s' "$parent"
+      return 0
+    fi
+    if [[ "$parent" == "/" ]]; then
+      break
+    fi
+    probe="$parent"
+  done
+
+  return 1
 }
 
 build_full_path() {
@@ -470,9 +537,11 @@ wait_for_dropbox_ready() {
     status="$("$DROPBOX_CLI" status 2>/dev/null || true)"
 
     case "$status" in
-      *"Up to date"*|*"Syncing"*|*"Connecting"*|*"Downloading"*|*"Indexing"*)
+      *"Up to date"*|*"Syncing"*)
         log "Dropbox is responding: $status"
         return 0
+        ;;
+      *"Connecting"*|*"Downloading"*|*"Indexing"*|*"Starting"*)
         ;;
       *"not linked"*|*"This computer isn't linked"*|*"isn't linked to any Dropbox account"*|*"Please visit "*"/cli_link_nonce"*)
         log "Dropbox requires account linking before continuing."
@@ -594,6 +663,22 @@ configure_selective_sync() {
   local exclude_line
   local exclude_item
   local exclude_output
+  local action_failures=0
+  local fallback_prefix=""
+
+  if ! path_has_listable_entries "$PREFIX_PATH_NORMALIZED"; then
+    fallback_prefix="$(nearest_listable_nonroot_parent "$PREFIX_PATH_NORMALIZED" || true)"
+    if [[ -n "$fallback_prefix" ]]; then
+      log "Configured PREFIX_PATH is not listable: ${PREFIX_PATH_NORMALIZED}"
+      log "Falling back to nearest listable parent: ${fallback_prefix}"
+      PREFIX_PATH_NORMALIZED="$fallback_prefix"
+      update_prefix_path_from_normalized
+    else
+      log "Configured PREFIX_PATH is not listable: ${PREFIX_PATH_NORMALIZED}"
+      log "No safe non-root parent is listable yet; refusing to fall back to '/'."
+      return 2
+    fi
+  fi
 
   prefix_leaf="${PREFIX_PATH_NORMALIZED##*/}"
 
@@ -658,10 +743,16 @@ configure_selective_sync() {
 
       if is_allowed "$rel_path"; then
         log "Including ${full_path}"
-        "$DROPBOX_CLI" exclude remove "${full_path}" >/dev/null 2>&1 || true
+        if ! "$DROPBOX_CLI" exclude remove "${full_path}" >/dev/null 2>&1; then
+          log "Failed to include ${full_path} (dropbox exclude remove)."
+          action_failures=$((action_failures + 1))
+        fi
       else
         log "Excluding ${full_path}"
-        "$DROPBOX_CLI" exclude add "${full_path}" >/dev/null 2>&1 || true
+        if ! "$DROPBOX_CLI" exclude add "${full_path}" >/dev/null 2>&1; then
+          log "Failed to exclude ${full_path} (dropbox exclude add)."
+          action_failures=$((action_failures + 1))
+        fi
       fi
 
       if is_ancestor_of_allowed "$rel_path"; then
@@ -672,7 +763,7 @@ configure_selective_sync() {
 
   if [[ "$saw_valid_entry" -eq 0 ]]; then
     log "No listable entries found under ${PREFIX_PATH_NORMALIZED}. Verify PREFIX_PATH with: $DROPBOX_CLI ls \"$PREFIX_PATH_NORMALIZED\""
-    return 0
+    return 2
   fi
 
   if exclude_output="$("$DROPBOX_CLI" exclude list 2>/dev/null || true)"; then
@@ -685,11 +776,18 @@ configure_selective_sync() {
         full_path="$(build_full_path "$normalized")"
         if [[ "$exclude_item" == "$full_path" || "$exclude_item" == "$full_path/"* ]]; then
           log "Including nested excluded path ${exclude_item}"
-          "$DROPBOX_CLI" exclude remove "$exclude_item" >/dev/null 2>&1 || true
+          if ! "$DROPBOX_CLI" exclude remove "$exclude_item" >/dev/null 2>&1; then
+            log "Failed to include nested excluded path ${exclude_item}."
+            action_failures=$((action_failures + 1))
+          fi
           break
         fi
       done
     done <<< "$exclude_output"
+  fi
+
+  if [[ "$action_failures" -gt 0 ]]; then
+    error "Selective sync encountered ${action_failures} Dropbox CLI command failure(s)."
   fi
 
   log "Selective sync configuration finished."
@@ -703,6 +801,15 @@ DROPBOX_DAEMON="$DROPBOX_DIST_DIR/dropboxd"
 DROPBOX_CLI="$HOME_DIR/.local/bin/dropbox"
 DROPBOX_DOWNLOAD_URL="https://www.dropbox.com/download?plat=lnx.x86_64"
 DROPBOX_CLI_URL="https://www.dropbox.com/download?dl=packages/dropbox.py"
+
+write_env_config() {
+  mkdir -p "$CONFIG_DIR"
+  cat > "$ENV_FILE" <<EOF
+# Generated by install-codedrop-lxc.sh on $(date '+%Y-%m-%d %H:%M:%S')
+PREFIX_PATH=$PREFIX_PATH
+SYNC_FOLDERS=$SYNC_FOLDERS
+EOF
+}
 
 if ! command -v apt-get >/dev/null 2>&1; then
   error "apt-get not found. This installer currently supports Debian/Ubuntu-based LXC containers."
@@ -815,11 +922,7 @@ download_update_script_as_user
 if [[ "$INSTALL_DROPBOX" == "y" ]]; then
   mkdir -p "$CONFIG_DIR" "$HOME_DIR/.local/bin"
 
-  cat > "$ENV_FILE" <<EOF
-# Generated by install-codedrop-lxc.sh on $(date '+%Y-%m-%d %H:%M:%S')
-PREFIX_PATH=$PREFIX_PATH
-SYNC_FOLDERS=$SYNC_FOLDERS
-EOF
+  write_env_config
 
   log "Saved config to $ENV_FILE"
 
@@ -876,7 +979,12 @@ EOF
   fi
 
   if wait_for_dropbox_ready; then
-    configure_selective_sync
+    if configure_selective_sync; then
+      write_env_config
+      log "Saved effective config to $ENV_FILE"
+    else
+      error "Selective sync update failed. Verify PREFIX_PATH with '$DROPBOX_CLI ls \"$PREFIX_PATH_NORMALIZED\"', wait for Dropbox to finish startup, then rerun."
+    fi
   else
     wait_rc=$?
     if [[ "$wait_rc" -eq 10 ]]; then

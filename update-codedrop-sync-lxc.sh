@@ -196,17 +196,34 @@ prompt_for_prefix_path() {
 }
 
 normalize_prefix_path() {
-  local raw="${PREFIX_PATH:-/}"
+  local raw="${PREFIX_PATH:-}"
   raw="$(trim "$raw")"
+  [[ -z "$raw" ]] && raw="/"
 
-  if [[ -z "$raw" || "$raw" == "/" ]]; then
-    PREFIX_PATH_NORMALIZED="/"
-    return
+  if [[ "$raw" == "/" ]]; then
+    PREFIX_PATH_NORMALIZED="$HOME_DIR"
+  elif [[ "$raw" == /* ]]; then
+    PREFIX_PATH_NORMALIZED="${raw%/}"
+    [[ -z "$PREFIX_PATH_NORMALIZED" ]] && PREFIX_PATH_NORMALIZED="/"
+  else
+    raw="${raw#/}"
+    raw="${raw%/}"
+    PREFIX_PATH_NORMALIZED="$HOME_DIR/$raw"
   fi
 
-  raw="${raw#/}"
-  raw="${raw%/}"
-  PREFIX_PATH_NORMALIZED="/$raw"
+  while [[ "$PREFIX_PATH_NORMALIZED" == *"//"* ]]; do
+    PREFIX_PATH_NORMALIZED="${PREFIX_PATH_NORMALIZED//\/\//\/}"
+  done
+}
+
+update_prefix_path_from_normalized() {
+  if [[ "$PREFIX_PATH_NORMALIZED" == "$HOME_DIR" ]]; then
+    PREFIX_PATH="/"
+  elif [[ "$PREFIX_PATH_NORMALIZED" == "$HOME_DIR/"* ]]; then
+    PREFIX_PATH="${PREFIX_PATH_NORMALIZED#"$HOME_DIR"/}"
+  else
+    PREFIX_PATH="$PREFIX_PATH_NORMALIZED"
+  fi
 }
 
 path_has_listable_entries() {
@@ -239,16 +256,19 @@ path_has_listable_entries() {
   return 1
 }
 
-nearest_listable_parent() {
+nearest_listable_nonroot_parent() {
   local probe="$1"
   local parent
 
   while [[ "$probe" != "/" ]]; do
     parent="${probe%/*}"
     [[ -z "$parent" ]] && parent="/"
-    if path_has_listable_entries "$parent"; then
+    if [[ "$parent" != "/" ]] && path_has_listable_entries "$parent"; then
       printf '%s' "$parent"
       return 0
+    fi
+    if [[ "$parent" == "/" ]]; then
+      break
     fi
     probe="$parent"
   done
@@ -402,16 +422,16 @@ configure_selective_sync() {
   local fallback_prefix=""
 
   if ! path_has_listable_entries "$PREFIX_PATH_NORMALIZED"; then
-    fallback_prefix="$(nearest_listable_parent "$PREFIX_PATH_NORMALIZED" || true)"
+    fallback_prefix="$(nearest_listable_nonroot_parent "$PREFIX_PATH_NORMALIZED" || true)"
     if [[ -n "$fallback_prefix" ]]; then
       log "Configured PREFIX_PATH is not listable: ${PREFIX_PATH_NORMALIZED}"
       log "Falling back to nearest listable parent: ${fallback_prefix}"
       PREFIX_PATH_NORMALIZED="$fallback_prefix"
-      if [[ "$PREFIX_PATH_NORMALIZED" == "/" ]]; then
-        PREFIX_PATH="/"
-      else
-        PREFIX_PATH="${PREFIX_PATH_NORMALIZED#/}"
-      fi
+      update_prefix_path_from_normalized
+    else
+      log "Configured PREFIX_PATH is not listable: ${PREFIX_PATH_NORMALIZED}"
+      log "No safe non-root parent is listable yet; refusing to fall back to '/'."
+      return 2
     fi
   fi
 
