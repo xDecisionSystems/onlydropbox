@@ -305,6 +305,30 @@ build_ls_path() {
   fi
 }
 
+run_exclude_cmd() {
+  local mode="$1"
+  local sync_path="$2"
+  local rel_path
+  local local_abs
+  local try_path
+  local cmd_output
+
+  rel_path="${sync_path#/}"
+  local_abs="$HOME_DIR/$rel_path"
+  while [[ "$local_abs" == *"//"* ]]; do
+    local_abs="${local_abs//\/\//\/}"
+  done
+
+  for try_path in "$sync_path" "$rel_path" "$local_abs"; do
+    cmd_output="$("$DROPBOX_CLI" exclude "$mode" "$try_path" 2>&1)" && return 0
+    if [[ "$cmd_output" == *"already ignored"* || "$cmd_output" == *"isn't currently ignored"* || "$cmd_output" == *"not currently ignored"* ]]; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
 parse_sync_folders() {
   local raw="${SYNC_FOLDERS:-}"
   local token
@@ -438,8 +462,10 @@ configure_selective_sync() {
   local exclude_line
   local exclude_item
   local exclude_output
+  local final_exclude_output
   local action_failures=0
   local fallback_prefix=""
+  local exclude_attempts=0
 
   if ! path_has_listable_entries "$PREFIX_PATH_LS_NORMALIZED"; then
     fallback_prefix="$(nearest_listable_nonroot_parent "$PREFIX_PATH_LS_NORMALIZED" || true)"
@@ -531,13 +557,14 @@ configure_selective_sync() {
 
       if is_allowed "$rel_path"; then
         log "Including ${full_path}"
-        if ! "$DROPBOX_CLI" exclude remove "${full_path}" >/dev/null 2>&1; then
+        if ! run_exclude_cmd remove "${full_path}"; then
           log "Failed to include ${full_path} (dropbox exclude remove)."
           action_failures=$((action_failures + 1))
         fi
       else
         log "Excluding ${full_path}"
-        if ! "$DROPBOX_CLI" exclude add "${full_path}" >/dev/null 2>&1; then
+        exclude_attempts=$((exclude_attempts + 1))
+        if ! run_exclude_cmd add "${full_path}"; then
           log "Failed to exclude ${full_path} (dropbox exclude add)."
           action_failures=$((action_failures + 1))
         fi
@@ -565,7 +592,7 @@ configure_selective_sync() {
         full_path="$(build_full_path "$normalized")"
         if [[ "$exclude_item" == "$full_path" || "$exclude_item" == "$full_path/"* ]]; then
           log "Including nested excluded path ${exclude_item}"
-          if ! "$DROPBOX_CLI" exclude remove "$exclude_item" >/dev/null 2>&1; then
+          if ! run_exclude_cmd remove "$exclude_item"; then
             log "Failed to include nested excluded path ${exclude_item}."
             action_failures=$((action_failures + 1))
           fi
@@ -577,6 +604,11 @@ configure_selective_sync() {
 
   if [[ "$action_failures" -gt 0 ]]; then
     error "Selective sync encountered ${action_failures} Dropbox CLI command failure(s)."
+  fi
+
+  final_exclude_output="$("$DROPBOX_CLI" exclude list 2>/dev/null || true)"
+  if [[ "$exclude_attempts" -gt 0 && "$final_exclude_output" == *"No directories are being ignored."* ]]; then
+    error "Selective sync issued exclude operations, but Dropbox reports no excluded directories. Try again after indexing settles, and verify CLI path mode with: '$DROPBOX_CLI exclude add \"${PREFIX_PATH#/}\"'."
   fi
 
   log "Selective sync configuration finished."
