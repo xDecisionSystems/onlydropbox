@@ -572,13 +572,28 @@ if [[ "${EUID}" -eq 0 && "${CODEDROP_AS_USER:-}" != "1" ]]; then
     log "Installing Dropbox prerequisites."
     run_privileged env DEBIAN_FRONTEND=noninteractive apt-get install -y \
       wget \
+      python3-gpg \
       libatomic1 \
       libglib2.0-0 \
       libstdc++6
   fi
 
-  prompt_for_dropbox_user
+  if [[ "$INSTALL_DROPBOX" == "y" ]]; then
+    prompt_for_dropbox_user
+  fi
   reexec_as_dropbox_user
+fi
+
+if [[ "$INSTALL_DROPBOX" == "y" ]]; then
+  existing_prefix="/"
+  existing_sync=""
+  if [[ -f "$ENV_FILE" ]]; then
+    existing_prefix="$(read_config_value "PREFIX_PATH" "$ENV_FILE")"
+    existing_sync="$(read_config_value "SYNC_FOLDERS" "$ENV_FILE")"
+  fi
+
+  PREFIX_PATH="$(prompt "PREFIX_PATH (Dropbox base path)" "${existing_prefix:-/}")"
+  SYNC_FOLDERS="$(prompt "SYNC_FOLDERS (comma-separated first-level folders to sync; empty = unchanged)" "${existing_sync:-}")"
 fi
 
 INSTALL_CODE_SERVER="n"
@@ -639,16 +654,6 @@ fi
 download_update_script_as_user
 
 if [[ "$INSTALL_DROPBOX" == "y" ]]; then
-  existing_prefix="/"
-  existing_sync=""
-  if [[ -f "$ENV_FILE" ]]; then
-    existing_prefix="$(read_config_value "PREFIX_PATH" "$ENV_FILE")"
-    existing_sync="$(read_config_value "SYNC_FOLDERS" "$ENV_FILE")"
-  fi
-
-  PREFIX_PATH="$(prompt "PREFIX_PATH (Dropbox base path)" "${existing_prefix:-/}")"
-  SYNC_FOLDERS="$(prompt "SYNC_FOLDERS (comma-separated first-level folders to sync; empty = unchanged)" "${existing_sync:-}")"
-
   mkdir -p "$CONFIG_DIR" "$HOME_DIR/.local/bin"
 
   cat > "$ENV_FILE" <<EOF
