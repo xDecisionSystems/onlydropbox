@@ -209,6 +209,53 @@ normalize_prefix_path() {
   PREFIX_PATH_NORMALIZED="/$raw"
 }
 
+path_has_listable_entries() {
+  local probe_path="$1"
+  local probe_trimmed
+  local -a probe_entries
+  local name
+  local normalized
+
+  probe_trimmed="${probe_path#/}"
+  mapfile -t probe_entries < <("$DROPBOX_CLI" ls "$probe_path" 2>/dev/null || true)
+  [[ "${#probe_entries[@]}" -eq 0 ]] && return 1
+
+  for name in "${probe_entries[@]}"; do
+    normalized="${name%/}"
+    normalized="${normalized#/}"
+    if [[ "$normalized" == *" (File doesn't exist!)" ]]; then
+      continue
+    fi
+    if [[ -n "$probe_trimmed" && "$probe_trimmed" != "/" ]]; then
+      if [[ "$normalized" == "$probe_trimmed/"* ]]; then
+        normalized="${normalized#"$probe_trimmed"/}"
+      elif [[ "$normalized" == "$probe_trimmed" ]]; then
+        normalized=""
+      fi
+    fi
+    [[ -n "$normalized" ]] && return 0
+  done
+
+  return 1
+}
+
+nearest_listable_parent() {
+  local probe="$1"
+  local parent
+
+  while [[ "$probe" != "/" ]]; do
+    parent="${probe%/*}"
+    [[ -z "$parent" ]] && parent="/"
+    if path_has_listable_entries "$parent"; then
+      printf '%s' "$parent"
+      return 0
+    fi
+    probe="$parent"
+  done
+
+  return 1
+}
+
 build_full_path() {
   local child="$1"
   if [[ "$PREFIX_PATH_NORMALIZED" == "/" ]]; then
@@ -352,6 +399,21 @@ configure_selective_sync() {
   local exclude_item
   local exclude_output
   local action_failures=0
+  local fallback_prefix=""
+
+  if ! path_has_listable_entries "$PREFIX_PATH_NORMALIZED"; then
+    fallback_prefix="$(nearest_listable_parent "$PREFIX_PATH_NORMALIZED" || true)"
+    if [[ -n "$fallback_prefix" ]]; then
+      log "Configured PREFIX_PATH is not listable: ${PREFIX_PATH_NORMALIZED}"
+      log "Falling back to nearest listable parent: ${fallback_prefix}"
+      PREFIX_PATH_NORMALIZED="$fallback_prefix"
+      if [[ "$PREFIX_PATH_NORMALIZED" == "/" ]]; then
+        PREFIX_PATH="/"
+      else
+        PREFIX_PATH="${PREFIX_PATH_NORMALIZED#/}"
+      fi
+    fi
+  fi
 
   prefix_leaf="${PREFIX_PATH_NORMALIZED##*/}"
 
@@ -479,6 +541,15 @@ if [[ ! -x "$DROPBOX_CLI" ]]; then
   error "Dropbox CLI not found at $DROPBOX_CLI. Run the installer first."
 fi
 
+write_env_config() {
+  mkdir -p "$CONFIG_DIR"
+  cat > "$ENV_FILE" <<CONFIG
+# Updated by update-codedrop-sync-lxc.sh on $(date '+%Y-%m-%d %H:%M:%S')
+PREFIX_PATH=$PREFIX_PATH
+SYNC_FOLDERS=$SYNC_FOLDERS
+CONFIG
+}
+
 existing_prefix="/"
 existing_sync=""
 if [[ -f "$ENV_FILE" ]]; then
@@ -493,12 +564,7 @@ PREFIX_PATH="$(trim "$PREFIX_PATH")"
 SYNC_FOLDERS="$(trim "$SYNC_FOLDERS")"
 [[ -z "$PREFIX_PATH" ]] && PREFIX_PATH="/"
 
-mkdir -p "$CONFIG_DIR"
-cat > "$ENV_FILE" <<CONFIG
-# Updated by update-codedrop-sync-lxc.sh on $(date '+%Y-%m-%d %H:%M:%S')
-PREFIX_PATH=$PREFIX_PATH
-SYNC_FOLDERS=$SYNC_FOLDERS
-CONFIG
+write_env_config
 
 log "Saved config to $ENV_FILE"
 
@@ -518,6 +584,8 @@ fi
 wait_rc=0
 if wait_for_dropbox_ready; then
   if configure_selective_sync; then
+    write_env_config
+    log "Saved effective config to $ENV_FILE"
     printf '\nUpdated selective sync with:\n  PREFIX_PATH=%s\n  SYNC_FOLDERS=%s\n\n' "$PREFIX_PATH" "$SYNC_FOLDERS"
     exit 0
   fi
