@@ -314,11 +314,15 @@ run_exclude_cmd() {
   local verify_try
 
   rel_path="${sync_path#/}"
+  RUN_EXCLUDE_LAST_ERROR=""
   for attempt in 1 2 3 4 5; do
     cmd_output="$("$DROPBOX_CLI" exclude "$mode" "$rel_path" 2>&1 || true)"
+    RUN_EXCLUDE_LAST_ERROR="$cmd_output"
     if [[ -n "$cmd_output" ]]; then
-      if [[ "$cmd_output" == *"already ignored"* || "$cmd_output" == *"isn't currently ignored"* || "$cmd_output" == *"not currently ignored"* || "$cmd_output" == *"Excluded:"* || "$cmd_output" == *"Included:"* ]]; then
-        :
+      if [[ "$cmd_output" == *"Excluded:"* || "$cmd_output" == *"Included:"* ]]; then
+        return 0
+      elif [[ "$cmd_output" == *"already ignored"* || "$cmd_output" == *"isn't currently ignored"* || "$cmd_output" == *"not currently ignored"* ]]; then
+        return 0
       elif [[ "$cmd_output" == *"Error"* || "$cmd_output" == *"error"* ]]; then
         sleep 1
         continue
@@ -564,6 +568,7 @@ configure_selective_sync() {
         [[ -z "$name" ]] && continue
       normalized="${name%/}"
       normalized="${normalized#/}"
+      normalized="$(trim "$normalized")"
       if [[ "$normalized" == *" (File doesn't exist!)" ]]; then
         continue
       fi
@@ -587,6 +592,7 @@ configure_selective_sync() {
       fi
 
       rel_path="$rel_path_raw"
+      rel_path="$(trim "$rel_path")"
       if [[ -n "$prefix_leaf" && "$prefix_leaf" != "/" ]]; then
         if [[ "$rel_path" == "$prefix_leaf/"* ]]; then
           rel_path="${rel_path#"$prefix_leaf"/}"
@@ -601,7 +607,7 @@ configure_selective_sync() {
       if is_allowed "$rel_path"; then
         log "Including ${full_path}"
         if ! run_exclude_cmd remove "${full_path}"; then
-          log "Failed to include ${full_path} (dropbox exclude remove)."
+          log "Failed to include ${full_path} (dropbox exclude remove): ${RUN_EXCLUDE_LAST_ERROR:-no output}"
           action_failures=$((action_failures + 1))
         fi
       else
@@ -610,7 +616,7 @@ configure_selective_sync() {
         expected_rel="${full_path#/}"
         expected_excludes+=("$expected_rel")
         if ! run_exclude_cmd add "${full_path}"; then
-          log "Failed to exclude ${full_path} (dropbox exclude add)."
+          log "Failed to exclude ${full_path} (dropbox exclude add): ${RUN_EXCLUDE_LAST_ERROR:-no output}"
           action_failures=$((action_failures + 1))
         fi
       fi
@@ -638,7 +644,7 @@ configure_selective_sync() {
         if [[ "$exclude_item" == "$full_path" || "$exclude_item" == "$full_path/"* ]]; then
           log "Including nested excluded path ${exclude_item}"
           if ! run_exclude_cmd remove "$exclude_item"; then
-            log "Failed to include nested excluded path ${exclude_item}."
+            log "Failed to include nested excluded path ${exclude_item}: ${RUN_EXCLUDE_LAST_ERROR:-no output}"
             action_failures=$((action_failures + 1))
           fi
           break
@@ -749,6 +755,7 @@ if is_link_required_status "$status_out"; then
   else
     printf '\nDropbox is not linked. Run:\n  %s start -i\n\n' "$DROPBOX_CLI"
   fi
+  printf 'SCRIPT_MARKER: catmug\n'
   exit 0
 fi
 
@@ -757,7 +764,7 @@ if wait_for_dropbox_ready; then
   if configure_selective_sync; then
     write_env_config
     log "Saved effective config to $ENV_FILE"
-    printf '\nUpdated selective sync with:\n  PREFIX_PATH=%s\n  SYNC_FOLDERS=%s\n\n' "$PREFIX_PATH" "$SYNC_FOLDERS"
+    printf '\nUpdated selective sync with:\n  PREFIX_PATH=%s\n  SYNC_FOLDERS=%s\n\nSCRIPT_MARKER: catmug\n\n' "$PREFIX_PATH" "$SYNC_FOLDERS"
     exit 0
   fi
   error "Selective sync update failed. Verify PREFIX_PATH with '$DROPBOX_CLI ls \"$PREFIX_PATH_NORMALIZED\"', wait for Dropbox to finish startup, then rerun."
@@ -766,7 +773,7 @@ else
 fi
 
 if [[ "$wait_rc" -eq 10 ]]; then
-  printf '\nDropbox needs account linking before selective sync can be applied.\nRun:\n  %s start -i\n\n' "$DROPBOX_CLI"
+  printf '\nDropbox needs account linking before selective sync can be applied.\nRun:\n  %s start -i\n\nSCRIPT_MARKER: catmug\n\n' "$DROPBOX_CLI"
   exit 0
 fi
 
