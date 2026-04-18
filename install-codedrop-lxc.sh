@@ -507,23 +507,37 @@ configure_selective_sync() {
   local current_rel
   local current_full
   local current_trimmed
+  local current_effective_rel
+  local prefix_leaf
   local name
   local normalized
   local rel_path
+  local rel_path_raw
   local full_path
   local -a remote_entries
   local exclude_line
   local exclude_item
   local exclude_output
 
+  prefix_leaf="${PREFIX_PATH_NORMALIZED##*/}"
+
   while [[ "${#queue[@]}" -gt 0 ]]; do
     current_rel="${queue[0]}"
     queue=("${queue[@]:1}")
 
-    if [[ -z "$current_rel" ]]; then
+    current_effective_rel="$current_rel"
+    if [[ -n "$prefix_leaf" && "$prefix_leaf" != "/" ]]; then
+      if [[ "$current_effective_rel" == "$prefix_leaf" ]]; then
+        current_effective_rel=""
+      elif [[ "$current_effective_rel" == "$prefix_leaf/"* ]]; then
+        current_effective_rel="${current_effective_rel#"$prefix_leaf"/}"
+      fi
+    fi
+
+    if [[ -z "$current_effective_rel" ]]; then
       current_full="$PREFIX_PATH_NORMALIZED"
     else
-      current_full="$(build_full_path "$current_rel")"
+      current_full="$(build_full_path "$current_effective_rel")"
     fi
     current_trimmed="${current_full#/}"
 
@@ -545,9 +559,20 @@ configure_selective_sync() {
       [[ -z "$normalized" ]] && continue
 
       if [[ -z "$current_rel" ]]; then
-        rel_path="$normalized"
+        rel_path_raw="$normalized"
       else
-        rel_path="$current_rel/$normalized"
+        rel_path_raw="$current_rel/$normalized"
+      fi
+
+      rel_path="$rel_path_raw"
+      if [[ -n "$prefix_leaf" && "$prefix_leaf" != "/" ]]; then
+        if [[ "$rel_path" == "$prefix_leaf/"* ]]; then
+          rel_path="${rel_path#"$prefix_leaf"/}"
+        elif [[ "$rel_path" == "$prefix_leaf" ]]; then
+          # Dropbox CLI may echo the PREFIX_PATH leaf back as an entry.
+          # Skip exclude/include action for this synthetic self-entry.
+          continue
+        fi
       fi
       full_path="$(build_full_path "$rel_path")"
 
