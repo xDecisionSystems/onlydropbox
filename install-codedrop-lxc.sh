@@ -338,7 +338,7 @@ split_prefix_components() {
 
 prompt_for_prefix_path() {
   local existing_prefix="$1"
-  local account_type_default="personal"
+  local account_type_default="organization"
   local account_type
   local account_root_default
   local account_root
@@ -348,14 +348,16 @@ prompt_for_prefix_path() {
 
   split_prefix_components "$existing_prefix"
 
-  if [[ -n "$EXISTING_ACCOUNT_ROOT" && "$EXISTING_ACCOUNT_ROOT" != "Dropbox" ]]; then
-    account_type_default="organization"
+  if [[ "$EXISTING_ACCOUNT_ROOT" == "Dropbox" ]]; then
+    account_type_default="personal"
   fi
 
   while true; do
-    account_type="$(prompt "ACCOUNT_TYPE (personal/organization)" "$account_type_default")"
+    account_type="$(prompt "ACCOUNT_TYPE (o=organization, p=personal)" "$account_type_default")"
     account_type="$(trim "${account_type,,}")"
     case "$account_type" in
+      o|org|organization) account_type="organization"; break ;;
+      p|personal) account_type="personal"; break ;;
       personal|organization) break ;;
       *) log "Please enter 'personal' or 'organization'." ;;
     esac
@@ -372,7 +374,7 @@ prompt_for_prefix_path() {
   [[ -z "$account_root" ]] && error "ACCOUNT_ROOT cannot be empty."
 
   account_name_default="${EXISTING_ACCOUNT_NAME:-${DROPBOX_USER:-$USER}}"
-  account_name="$(prompt "ACCOUNT_NAME (e.g. Adan Vela)" "$account_name_default")"
+  account_name="$(prompt "ACCOUNT_NAME (Dropbox account folder name)" "$account_name_default")"
   account_name="$(trim "$account_name")"
   [[ -z "$account_name" ]] && error "ACCOUNT_NAME cannot be empty."
 

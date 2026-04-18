@@ -87,7 +87,7 @@ When Dropbox install is selected, the installer:
 - runs Dropbox as that user (not root)
 - prompts for `ACCOUNT_TYPE` (`personal` or `organization`)
 - prompts for `ACCOUNT_ROOT` (for example `Dropbox` or `UCF Dropbox`)
-- prompts for `ACCOUNT_NAME` (for example `Adan Vela`)
+- prompts for `ACCOUNT_NAME` (for example `Jane Doe`)
 - prompts for optional `ACCOUNT_SUBPATH`
 - builds `PREFIX_PATH` from account prompts, then prompts for `SYNC_FOLDERS`
 - saves config to `~/.config/codedrop/codedrop.env`
@@ -108,6 +108,17 @@ chmod +x update-codedrop-sync-lxc.sh
 This script reads/writes:
 
 - `~/.config/codedrop/codedrop.env`
+
+## Check Status and Excludes
+
+Run as the Dropbox user:
+
+```bash
+su - <dropbox_user> -c '~/.local/bin/dropbox status'
+su - <dropbox_user> -c '~/.local/bin/dropbox exclude list'
+```
+
+Important: wait until `dropbox status` is no longer showing active indexing/sync startup states before running other Dropbox commands (for example `exclude list`, `exclude add`, or `exclude remove`).
 
 ## Notes
 
