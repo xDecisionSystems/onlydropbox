@@ -190,15 +190,6 @@ install_codex_extension_as_user() {
     error "code-server is required to install a Codex extension. Install code-server and re-run the installer."
   fi
 
-  if [[ -z "${CODEX_EXTENSION_ID:-}" ]]; then
-    error "CODEX_EXTENSION_ID is required to install the Codex extension."
-  fi
-
-  if run_as_local_user_shell "$LOCAL_USER" "code-server --list-extensions 2>/dev/null | grep -Fxq $(printf '%q' "$CODEX_EXTENSION_ID")"; then
-    log "Codex extension '$CODEX_EXTENSION_ID' is already installed for user '$LOCAL_USER'."
-    return 0
-  fi
-
   log "Installing Codex extension '$CODEX_EXTENSION_ID' for user '$LOCAL_USER'."
   run_as_local_user_shell "$LOCAL_USER" "code-server --install-extension $(printf '%q' "$CODEX_EXTENSION_ID")"
 }
@@ -992,7 +983,7 @@ Run this command to get the pairing URL:
 EOF
     fi
     cat <<EOF
-SCRIPT_MARKER: cat
+SCRIPT_MARKER: nolatex
 
 After linking completes, re-run this installer to apply selective sync using:
   PREFIX_PATH=$PREFIX_PATH
@@ -1009,7 +1000,7 @@ EOF
     wait_rc=$?
     if [[ "$wait_rc" -eq 10 ]]; then
       cat <<EOF
-SCRIPT_MARKER: cat
+SCRIPT_MARKER: nolatex
 
 Dropbox needs linking before selective sync can be applied.
 Run:
@@ -1044,7 +1035,7 @@ if [[ "${EUID}" -ne 0 ]]; then
 fi
 
 INSTALL_DROPBOX="${INSTALL_DROPBOX:-n}"
-printf 'SCRIPT_MARKER: cat\n'
+printf 'SCRIPT_MARKER: nolatex\n'
 if prompt_yes_no "Install/keep Dropbox (headless daemon + selective sync)?" "${INSTALL_DROPBOX}"; then
   INSTALL_DROPBOX="y"
 else
@@ -1142,9 +1133,6 @@ fi
 if [[ "$INSTALL_CODEX_EXTENSION" == "y" ]]; then
   CODEX_EXTENSION_ID="$(prompt "CODEX_EXTENSION_ID (VS Code extension id, e.g. publisher.extension)" "${CODEX_EXTENSION_ID:-openai.chatgpt}")"
   CODEX_EXTENSION_ID="$(trim "$CODEX_EXTENSION_ID")"
-  if [[ -z "$CODEX_EXTENSION_ID" ]]; then
-    error "CODEX_EXTENSION_ID cannot be empty when Codex extension installation is selected."
-  fi
   install_codex_extension_as_user
 else
   log "Skipping Codex extension installation."
@@ -1160,21 +1148,11 @@ else
   log "Skipping Python extension installation."
 fi
 
-INSTALL_LATEX_SUPPORT="n"
-if prompt_yes_no "Enable LaTeX formatting in code-server for user '$LOCAL_USER'?" "n"; then
-  INSTALL_LATEX_SUPPORT="y"
-fi
-if [[ "$INSTALL_LATEX_SUPPORT" == "y" ]]; then
-  install_latex_support_as_user
-else
-  log "Skipping LaTeX support installation."
-fi
-
 download_update_script_as_user
 
 if [[ "$INSTALL_DROPBOX" == "y" ]]; then
   cat <<EOF
-SCRIPT_MARKER: cat
+SCRIPT_MARKER: nolatex
 
 Install complete (headless Dropbox, no Docker).
 
@@ -1199,7 +1177,7 @@ Useful commands:
 EOF
 else
   cat <<EOF
-SCRIPT_MARKER: cat
+SCRIPT_MARKER: nolatex
 
 Install complete.
 
