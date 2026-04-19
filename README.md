@@ -1,53 +1,6 @@
 # Codedrop
 
-Codedrop provides two ways to run Dropbox with selective sync:
-
-- Docker mode (`docker-compose.yml`)
-- LXC interactive installer (`install-codedrop-lxc.sh`)
-
-Selective sync inputs:
-
-- Docker mode: `ACCOUNT_ROOT` + `ACCOUNT_NAME` + `SYNC_FOLDERS`
-- LXC mode: `PREFIX_PATH` + `SYNC_FOLDERS`
-
-In Docker mode, `SYNC_FOLDERS` is interpreted relative to `ACCOUNT_ROOT/ACCOUNT_NAME`.
-If `SYNC_FOLDERS` is empty, selective sync is left unchanged.
-
-## Docker Quick Start
-
-1. Copy env template:
-
-```bash
-cp .env.example .env
-```
-
-2. Edit `.env`:
-
-```dotenv
-PUID=1000
-PGID=1000
-ACCOUNT_ROOT=UCF Dropbox
-ACCOUNT_NAME=John Doe
-SYNC_FOLDERS=Apps/Overleaf,Research/Papers
-```
-
-3. Start:
-
-```bash
-docker compose up -d --build
-```
-
-4. Link Dropbox account on first run:
-
-```bash
-docker logs -f codedrop
-```
-
-After linking, restart once:
-
-```bash
-docker compose restart
-```
+Codedrop is an LXC-focused installer for Dropbox selective sync.
 
 ## LXC Interactive Installer
 
@@ -92,7 +45,6 @@ When Dropbox install is selected, the installer:
 - prompts for `ACCOUNT_TYPE` (`personal` or `organization`)
 - prompts for `ACCOUNT_ROOT` (for example `Dropbox` or `UCF Dropbox`)
 - prompts for `ACCOUNT_NAME` (for example `Jane Doe`)
-- prompts for optional `ACCOUNT_SUBPATH`
 - builds `PREFIX_PATH` from account prompts, then prompts for `SYNC_FOLDERS`
 - saves config to `~/.config/codedrop/codedrop.env`
 - uses existing values from that file as defaults on future runs
@@ -133,11 +85,3 @@ Important: wait until `dropbox status` is no longer showing active indexing/sync
 - Example for path `UCF Dropbox/Bob Jones/`:
   - `PREFIX_PATH="UCF Dropbox/Bob Jones"`
   - `SYNC_FOLDERS="Research Docs,Class Materials"`
-
-## Build and Push (Docker Hub)
-
-Set `REPO` and `VERSION` in `build-and-push.sh`, then run:
-
-```bash
-./build-and-push.sh
-```

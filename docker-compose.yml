@@ -18,6 +18,6 @@ services:
       # Example: "Work,Photos,Apps/Overleaf"
       SYNC_FOLDERS: "${SYNC_FOLDERS:-}"
     volumes:
-      - ./data/dropbox-config:/home/dropbox/.dropbox
-      - ./data/dropbox-sync:/home/dropbox/Dropbox
-      - ./data/codedrop-config:/home/dropbox/.config/codedrop
+      - /data/dropbox-config:/home/dropbox/.dropbox
+      - /data/dropbox-sync:/home/dropbox/Dropbox
+      - /data/docker-bind/codedrop-config:/home/dropbox/.config/codedrop
