@@ -2,12 +2,67 @@
 set -euo pipefail
 
 DROPBOX_USER="dropbox"
+PUID="${PUID:-1000}"
+PGID="${PGID:-1000}"
 DROPBOX_HOME="$(getent passwd "$DROPBOX_USER" | cut -d: -f6)"
 DROPBOX_CLI="${DROPBOX_HOME}/.local/bin/dropbox"
 DROPBOX_DAEMON="${DROPBOX_HOME}/.dropbox-dist/dropboxd"
 
 log() {
   printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"
+}
+
+align_dropbox_ids_and_permissions() {
+  local current_uid
+  local current_gid
+  local existing_user
+  local target_group
+  local dropbox_group
+
+  if ! [[ "$PUID" =~ ^[0-9]+$ && "$PGID" =~ ^[0-9]+$ ]]; then
+    log "PUID and PGID must be numeric. Received PUID='${PUID}' PGID='${PGID}'."
+    exit 1
+  fi
+
+  current_uid="$(id -u "$DROPBOX_USER")"
+  current_gid="$(id -g "$DROPBOX_USER")"
+
+  if [[ "$current_gid" != "$PGID" ]]; then
+    if getent group "$PGID" >/dev/null 2>&1; then
+      target_group="$(getent group "$PGID" | cut -d: -f1)"
+      log "Using existing group '$target_group' (gid $PGID) for '$DROPBOX_USER'."
+      usermod -g "$target_group" "$DROPBOX_USER"
+    else
+      log "Updating gid for '$DROPBOX_USER' to $PGID."
+      groupmod -o -g "$PGID" "$DROPBOX_USER"
+    fi
+  fi
+
+  current_uid="$(id -u "$DROPBOX_USER")"
+  if [[ "$current_uid" != "$PUID" ]]; then
+    if getent passwd "$PUID" >/dev/null 2>&1; then
+      existing_user="$(getent passwd "$PUID" | cut -d: -f1)"
+      if [[ "$existing_user" != "$DROPBOX_USER" ]]; then
+        log "Requested PUID $PUID already belongs to '$existing_user'; keeping uid $(id -u "$DROPBOX_USER") for '$DROPBOX_USER'."
+      fi
+    else
+      log "Updating uid for '$DROPBOX_USER' to $PUID."
+      usermod -o -u "$PUID" "$DROPBOX_USER"
+    fi
+  fi
+
+  DROPBOX_HOME="$(getent passwd "$DROPBOX_USER" | cut -d: -f6)"
+  DROPBOX_CLI="${DROPBOX_HOME}/.local/bin/dropbox"
+  DROPBOX_DAEMON="${DROPBOX_HOME}/.dropbox-dist/dropboxd"
+  dropbox_group="$(id -gn "$DROPBOX_USER")"
+
+  mkdir -p "$DROPBOX_HOME/.dropbox" "$DROPBOX_HOME/Dropbox" "$DROPBOX_HOME/.config/codedrop" "$DROPBOX_HOME/.local/bin"
+  chown -R "$DROPBOX_USER:$dropbox_group" \
+    "$DROPBOX_HOME/.dropbox" \
+    "$DROPBOX_HOME/Dropbox" \
+    "$DROPBOX_HOME/.config/codedrop" \
+    "$DROPBOX_HOME/.local/bin" \
+    "$DROPBOX_HOME/.dropbox-dist" 2>/dev/null || true
 }
 
 run_as_dropbox_shell() {
@@ -295,6 +350,8 @@ show_link_hint_if_needed() {
     log "Dropbox account is not linked yet. Run 'docker logs <container>' and open the link URL shown by Dropbox."
   fi
 }
+
+align_dropbox_ids_and_permissions
 
 if [[ -z "${DROPBOX_HOME:-}" || ! -d "$DROPBOX_HOME" ]]; then
   log "Dropbox user '$DROPBOX_USER' does not exist in container."

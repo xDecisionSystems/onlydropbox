@@ -24,6 +24,8 @@ cp .env.example .env
 2. Edit `.env`:
 
 ```dotenv
+PUID=1000
+PGID=1000
 ACCOUNT_ROOT=UCF Dropbox
 ACCOUNT_NAME=John Doe
 SYNC_FOLDERS=Apps/Overleaf,Research/Papers
