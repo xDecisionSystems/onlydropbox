@@ -58,6 +58,7 @@ run_privileged() {
 
 LOCAL_USER="${DROPBOX_USER:-${SUDO_USER:-${USER:-}}}"
 LOCAL_HOME="${HOME:-/root}"
+CODE_SERVER_PASSWORD=""
 
 ensure_root_with_su() {
   [[ "${EUID}" -ne 0 ]] && error "This installer must run as root."
@@ -82,6 +83,16 @@ resolve_user_home() {
     home_dir="$(getent passwd "$user_name" | cut -d: -f6)"
   fi
   printf '%s' "${home_dir:-/home/$user_name}"
+}
+
+generate_random_password() {
+  local raw
+  raw="$(head -c 256 /dev/urandom | base64 -w0)"
+  raw="${raw//[^[:alnum:]]/}"
+  if [[ "${#raw}" -lt 20 ]]; then
+    raw="$(printf '%s' "$(date +%s%N)-$RANDOM-$$" | sha256sum | cut -c1-20)"
+  fi
+  printf '%s' "${raw:0:20}"
 }
 
 run_as_local_user() {
@@ -142,6 +153,14 @@ download_update_script_as_user() {
 }
 
 install_code_server_as_user() {
+  local code_server_bin
+  local override_dir
+  local override_file
+  local password_escaped
+
+  [[ -z "${CODE_SERVER_PASSWORD:-}" ]] && error "CODE_SERVER_PASSWORD is not set."
+  printf -v password_escaped '%q' "$CODE_SERVER_PASSWORD"
+
   log "Configuring code-server bind address for user '$LOCAL_USER' (0.0.0.0:8080)."
   run_as_local_user_shell "$LOCAL_USER" "mkdir -p ~/.config/code-server"
   run_as_local_user_shell "$LOCAL_USER" "
@@ -153,17 +172,46 @@ if [[ -f \"\$cfg\" ]]; then
   else
     printf '\nbind-addr: 0.0.0.0:8080\n' >> \"\$cfg\"
   fi
+  if grep -Eq '^[[:space:]]*auth:' \"\$cfg\"; then
+    sed -i -E 's#^[[:space:]]*auth:.*#auth: password#' \"\$cfg\"
+  else
+    printf 'auth: password\n' >> \"\$cfg\"
+  fi
+  if grep -Eq '^[[:space:]]*password:' \"\$cfg\"; then
+    sed -i -E 's#^[[:space:]]*password:.*#password: $password_escaped#' \"\$cfg\"
+  else
+    printf 'password: $password_escaped\n' >> \"\$cfg\"
+  fi
+  if grep -Eq '^[[:space:]]*cert:' \"\$cfg\"; then
+    sed -i -E 's#^[[:space:]]*cert:.*#cert: false#' \"\$cfg\"
+  else
+    printf 'cert: false\n' >> \"\$cfg\"
+  fi
 else
   cat > \"\$cfg\" <<'EOF'
 bind-addr: 0.0.0.0:8080
 auth: password
-password: changeme
+password: $password_escaped
 cert: false
 EOF
 fi
 "
 
   if command -v systemctl >/dev/null 2>&1; then
+    code_server_bin="$(command -v code-server || true)"
+    [[ -z "$code_server_bin" ]] && error "code-server binary not found after install."
+
+    override_dir="/etc/systemd/system/code-server@${LOCAL_USER}.service.d"
+    override_file="$override_dir/override.conf"
+    run_privileged mkdir -p "$override_dir"
+    run_privileged sh -c "cat > $(printf '%q' "$override_file") <<EOF
+[Service]
+ExecStart=
+ExecStart=$code_server_bin
+EOF
+"
+
+    run_privileged systemctl daemon-reload
     log "Enabling and starting code-server service for user '$LOCAL_USER'."
     run_privileged systemctl enable --now "code-server@${LOCAL_USER}"
   else
@@ -1064,7 +1112,7 @@ Run this command to get the pairing URL:
 EOF
     fi
     cat <<EOF
-SCRIPT_MARKER: public
+SCRIPT_MARKER: passwd
 
 After linking completes, re-run this installer to apply selective sync using:
   PREFIX_PATH=$PREFIX_PATH
@@ -1081,7 +1129,7 @@ EOF
     wait_rc=$?
     if [[ "$wait_rc" -eq 10 ]]; then
       cat <<EOF
-SCRIPT_MARKER: public
+SCRIPT_MARKER: passwd
 
 Dropbox needs linking before selective sync can be applied.
 Run:
@@ -1118,7 +1166,7 @@ fi
 INSTALL_DROPBOX="${INSTALL_DROPBOX:-n}"
 load_initial_defaults
 INSTALL_DROPBOX="$(normalize_yes_no_default "$INSTALL_DROPBOX")"
-printf 'SCRIPT_MARKER: public\n'
+printf 'SCRIPT_MARKER: passwd\n'
 if prompt_yes_no "Install/keep Dropbox (headless daemon + selective sync)?" "${INSTALL_DROPBOX}"; then
   INSTALL_DROPBOX="y"
 else
@@ -1198,6 +1246,18 @@ else
   INSTALL_CODE_SERVER="n"
 fi
 if [[ "$INSTALL_CODE_SERVER" == "y" ]]; then
+  existing_code_server_password="$(run_as_local_user_shell "$LOCAL_USER" "awk -F': *' '/^[[:space:]]*password:/{print \$2; exit}' ~/.config/code-server/config.yaml 2>/dev/null || true" | tr -d '\r\n')"
+  CODE_SERVER_PASSWORD="$(prompt "CODE_SERVER_PASSWORD (leave blank to keep existing or generate random)" "")"
+  CODE_SERVER_PASSWORD="$(trim "$CODE_SERVER_PASSWORD")"
+  if [[ -z "$CODE_SERVER_PASSWORD" ]]; then
+    if [[ -n "${existing_code_server_password:-}" ]]; then
+      CODE_SERVER_PASSWORD="$existing_code_server_password"
+      log "Keeping existing code-server password from config."
+    else
+      CODE_SERVER_PASSWORD="$(generate_random_password)"
+      log "Generated random code-server password."
+    fi
+  fi
   install_code_server_as_root
 else
   log "Skipping code-server installation."
@@ -1248,7 +1308,7 @@ log "Saved installer defaults to $ENV_FILE"
 
 if [[ "$INSTALL_DROPBOX" == "y" ]]; then
   cat <<EOF
-SCRIPT_MARKER: public
+SCRIPT_MARKER: passwd
 
 Install complete (headless Dropbox, no Docker).
 
@@ -1273,7 +1333,7 @@ Useful commands:
 EOF
 else
   cat <<EOF
-SCRIPT_MARKER: public
+SCRIPT_MARKER: passwd
 
 Install complete.
 
@@ -1281,6 +1341,15 @@ Dropbox installation was skipped by choice.
 Re-run this installer any time and answer "yes" to install Dropbox later.
 Update helper script is available at:
   $HOME_DIR/.local/bin/update-codedrop-sync-lxc.sh
+
+EOF
+fi
+
+if [[ "$INSTALL_CODE_SERVER" == "y" ]]; then
+  cat <<EOF
+
+Code-server password:
+  $CODE_SERVER_PASSWORD
 
 EOF
 fi
