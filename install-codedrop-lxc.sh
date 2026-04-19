@@ -142,22 +142,19 @@ download_update_script_as_user() {
 }
 
 install_code_server_as_user() {
-  local user_config_dir="$HOME_DIR/.config/code-server"
-  local user_config_file="$user_config_dir/config.yaml"
-
   log "Configuring code-server bind address for user '$LOCAL_USER' (0.0.0.0:8080)."
-  run_as_local_user_shell "$LOCAL_USER" "mkdir -p $(printf '%q' "$user_config_dir")"
+  run_as_local_user_shell "$LOCAL_USER" "mkdir -p ~/.config/code-server"
   run_as_local_user_shell "$LOCAL_USER" "
 set -e
-cfg=$(printf '%q' "$user_config_file")
-if [[ -f \$cfg ]]; then
-  if grep -q '^bind-addr:' \$cfg; then
-    sed -i 's#^bind-addr:.*#bind-addr: 0.0.0.0:8080#' \$cfg
+cfg=\"\$HOME/.config/code-server/config.yaml\"
+if [[ -f \"\$cfg\" ]]; then
+  if grep -Eq '^[[:space:]]*bind-addr:' \"\$cfg\"; then
+    sed -i -E 's#^[[:space:]]*bind-addr:.*#bind-addr: 0.0.0.0:8080#' \"\$cfg\"
   else
-    printf 'bind-addr: 0.0.0.0:8080\n' >> \$cfg
+    printf '\nbind-addr: 0.0.0.0:8080\n' >> \"\$cfg\"
   fi
 else
-  cat > \$cfg <<'EOF'
+  cat > \"\$cfg\" <<'EOF'
 bind-addr: 0.0.0.0:8080
 auth: password
 password: changeme
@@ -1067,7 +1064,7 @@ Run this command to get the pairing URL:
 EOF
     fi
     cat <<EOF
-SCRIPT_MARKER: notail2
+SCRIPT_MARKER: public
 
 After linking completes, re-run this installer to apply selective sync using:
   PREFIX_PATH=$PREFIX_PATH
@@ -1084,7 +1081,7 @@ EOF
     wait_rc=$?
     if [[ "$wait_rc" -eq 10 ]]; then
       cat <<EOF
-SCRIPT_MARKER: notail2
+SCRIPT_MARKER: public
 
 Dropbox needs linking before selective sync can be applied.
 Run:
@@ -1121,7 +1118,7 @@ fi
 INSTALL_DROPBOX="${INSTALL_DROPBOX:-n}"
 load_initial_defaults
 INSTALL_DROPBOX="$(normalize_yes_no_default "$INSTALL_DROPBOX")"
-printf 'SCRIPT_MARKER: notail2\n'
+printf 'SCRIPT_MARKER: public\n'
 if prompt_yes_no "Install/keep Dropbox (headless daemon + selective sync)?" "${INSTALL_DROPBOX}"; then
   INSTALL_DROPBOX="y"
 else
@@ -1251,7 +1248,7 @@ log "Saved installer defaults to $ENV_FILE"
 
 if [[ "$INSTALL_DROPBOX" == "y" ]]; then
   cat <<EOF
-SCRIPT_MARKER: notail2
+SCRIPT_MARKER: public
 
 Install complete (headless Dropbox, no Docker).
 
@@ -1276,7 +1273,7 @@ Useful commands:
 EOF
 else
   cat <<EOF
-SCRIPT_MARKER: notail2
+SCRIPT_MARKER: public
 
 Install complete.
 
