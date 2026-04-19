@@ -1067,7 +1067,7 @@ Run this command to get the pairing URL:
 EOF
     fi
     cat <<EOF
-SCRIPT_MARKER: notail
+SCRIPT_MARKER: notail2
 
 After linking completes, re-run this installer to apply selective sync using:
   PREFIX_PATH=$PREFIX_PATH
@@ -1084,7 +1084,7 @@ EOF
     wait_rc=$?
     if [[ "$wait_rc" -eq 10 ]]; then
       cat <<EOF
-SCRIPT_MARKER: notail
+SCRIPT_MARKER: notail2
 
 Dropbox needs linking before selective sync can be applied.
 Run:
@@ -1121,7 +1121,7 @@ fi
 INSTALL_DROPBOX="${INSTALL_DROPBOX:-n}"
 load_initial_defaults
 INSTALL_DROPBOX="$(normalize_yes_no_default "$INSTALL_DROPBOX")"
-printf 'SCRIPT_MARKER: notail\n'
+printf 'SCRIPT_MARKER: notail2\n'
 if prompt_yes_no "Install/keep Dropbox (headless daemon + selective sync)?" "${INSTALL_DROPBOX}"; then
   INSTALL_DROPBOX="y"
 else
@@ -1251,7 +1251,7 @@ log "Saved installer defaults to $ENV_FILE"
 
 if [[ "$INSTALL_DROPBOX" == "y" ]]; then
   cat <<EOF
-SCRIPT_MARKER: notail
+SCRIPT_MARKER: notail2
 
 Install complete (headless Dropbox, no Docker).
 
@@ -1273,13 +1273,10 @@ Useful commands:
   $DROPBOX_CLI stop
   $HOME_DIR/.local/bin/update-codedrop-sync-lxc.sh
 
-To install tailscale run the following command on the proxmox host:
-  bash -c "$(curl -fsSL https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/tools/addon/add-tailscale-lxc.sh)"
-
 EOF
 else
   cat <<EOF
-SCRIPT_MARKER: notail
+SCRIPT_MARKER: notail2
 
 Install complete.
 
@@ -1287,9 +1284,6 @@ Dropbox installation was skipped by choice.
 Re-run this installer any time and answer "yes" to install Dropbox later.
 Update helper script is available at:
   $HOME_DIR/.local/bin/update-codedrop-sync-lxc.sh
-
-To install tailscale run the following command on the proxmox host:
-  bash -c "$(curl -fsSL https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/tools/addon/add-tailscale-lxc.sh)"
 
 EOF
 fi
