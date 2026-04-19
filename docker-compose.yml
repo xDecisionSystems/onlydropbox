@@ -5,13 +5,17 @@ services:
     image: adclab/codedrop:latest
     container_name: codedrop
     restart: unless-stopped
+    ports:
+      - "8080:8080"
     environment:
+      DROPBOX_USER: "${DROPBOX_USER:-dropbox}"
       # Base Dropbox path where selective sync rules are applied.
       # Example: "/" (root), "/Team", "Team/Clients"
       PREFIX_PATH: "${PREFIX_PATH:-/}"
-      # Comma-separated folder names to sync within PREFIX_PATH.
-      # Example: "Work,Photos,Taxes"
+      # Comma-separated folder paths to sync within PREFIX_PATH (nested paths supported).
+      # Example: "Work,Photos,Apps/Overleaf"
       SYNC_FOLDERS: "${SYNC_FOLDERS:-}"
     volumes:
-      - ./data/dropbox-config:/root/.dropbox
-      - ./data/dropbox-sync:/root/Dropbox
+      - ./data/dropbox-config:/home/dropbox/.dropbox
+      - ./data/dropbox-sync:/home/dropbox/Dropbox
+      - ./data/codedrop-config:/home/dropbox/.config/codedrop

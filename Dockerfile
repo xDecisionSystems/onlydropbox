@@ -1,32 +1,52 @@
 FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
+ARG DROPBOX_USER=dropbox
+ENV DROPBOX_USER=${DROPBOX_USER}
+ENV DROPBOX_HOME=/home/${DROPBOX_USER}
+ENV PATH=/home/${DROPBOX_USER}/.local/bin:${PATH}
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
+        wget \
+        tar \
         python3 \
+        python3-gpg \
         procps \
+        libatomic1 \
+        libglib2.0-0 \
+        libstdc++6 \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Dropbox daemon
+# Create runtime user (Dropbox should not run as root)
+RUN useradd -m -d "${DROPBOX_HOME}" -s /bin/bash "${DROPBOX_USER}" \
+    && mkdir -p "${DROPBOX_HOME}/.local/bin" "${DROPBOX_HOME}/Dropbox" "${DROPBOX_HOME}/.config/codedrop" \
+    && chown -R "${DROPBOX_USER}:${DROPBOX_USER}" "${DROPBOX_HOME}"
+
+# Install Dropbox daemon into user home
 RUN curl -fsSL "https://www.dropbox.com/download?plat=lnx.x86_64" -o /tmp/dropbox.tgz \
-    && tar -xzf /tmp/dropbox.tgz -C /root \
-    && rm /tmp/dropbox.tgz
+    && tar -xzf /tmp/dropbox.tgz -C "${DROPBOX_HOME}" \
+    && rm /tmp/dropbox.tgz \
+    && chown -R "${DROPBOX_USER}:${DROPBOX_USER}" "${DROPBOX_HOME}/.dropbox-dist"
 
-# Install Dropbox CLI helper
-RUN curl -fsSL "https://www.dropbox.com/download?dl=packages/dropbox.py" -o /usr/local/bin/dropbox \
-    && chmod +x /usr/local/bin/dropbox
+# Install Dropbox CLI helper into user-local bin
+RUN curl -fsSL "https://www.dropbox.com/download?dl=packages/dropbox.py" -o "${DROPBOX_HOME}/.local/bin/dropbox" \
+    && chmod +x "${DROPBOX_HOME}/.local/bin/dropbox" \
+    && chown "${DROPBOX_USER}:${DROPBOX_USER}" "${DROPBOX_HOME}/.local/bin/dropbox"
 
-RUN mkdir -p /root/.dropbox /root/Dropbox
+# Install code-server system-wide (like LXC root flow)
+RUN sh -c 'curl -fsSL https://code-server.dev/install.sh | sh'
 
 COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
-VOLUME ["/root/.dropbox", "/root/Dropbox"]
+VOLUME ["/home/dropbox/.dropbox", "/home/dropbox/Dropbox", "/home/dropbox/.config/codedrop"]
 
 ENV SYNC_FOLDERS=""
 ENV PREFIX_PATH="/"
+
+EXPOSE 8080
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
