@@ -732,7 +732,7 @@ start_dropbox_daemon
 
 status_out="$(run_dropbox_cli status 2>&1 || true)"
 if is_link_required_status "$status_out"; then
-  printf 'SCRIPT_MARKER: externaltailscale\n'
+  printf 'SCRIPT_MARKER: codeserverip\n'
   link_url="$(extract_link_url "$status_out")"
   if [[ -n "$link_url" ]]; then
     printf '\nDropbox is not linked. Open this URL:\n  %s\n\n' "$link_url"
@@ -746,7 +746,7 @@ wait_rc=0
 if ! wait_for_dropbox_ready; then
   wait_rc=$?
   if [[ "$wait_rc" -eq 10 ]]; then
-    printf 'SCRIPT_MARKER: externaltailscale\n\nDropbox needs account linking before selective sync can be applied.\nRun:\n  %s start -i\n\n' "$DROPBOX_CLI"
+    printf 'SCRIPT_MARKER: codeserverip\n\nDropbox needs account linking before selective sync can be applied.\nRun:\n  %s start -i\n\n' "$DROPBOX_CLI"
     exit 0
   fi
   error "Dropbox did not become ready. Check /tmp/codedrop-dropboxd.log and '$DROPBOX_CLI status'."
@@ -771,5 +771,5 @@ if ! configure_selective_sync; then
 fi
 write_env_config
 log "Saved effective config to $ENV_FILE"
-printf 'SCRIPT_MARKER: externaltailscale\n\nUpdated selective sync with:\n  PREFIX_PATH=%s\n  SYNC_FOLDERS=%s\n\n' "$PREFIX_PATH" "$SYNC_FOLDERS"
+printf 'SCRIPT_MARKER: codeserverip\n\nUpdated selective sync with:\n  PREFIX_PATH=%s\n  SYNC_FOLDERS=%s\n\n' "$PREFIX_PATH" "$SYNC_FOLDERS"
 exit 0

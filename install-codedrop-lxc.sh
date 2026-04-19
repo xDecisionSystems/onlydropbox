@@ -142,8 +142,42 @@ download_update_script_as_user() {
 }
 
 install_code_server_as_user() {
+  local user_config_dir="$HOME_DIR/.config/code-server"
+  local user_config_file="$user_config_dir/config.yaml"
+
+  log "Configuring code-server bind address for user '$LOCAL_USER' (0.0.0.0:8080)."
+  run_as_local_user_shell "$LOCAL_USER" "mkdir -p $(printf '%q' "$user_config_dir")"
+  run_as_local_user_shell "$LOCAL_USER" "
+set -e
+cfg=$(printf '%q' "$user_config_file")
+if [[ -f \$cfg ]]; then
+  if grep -q '^bind-addr:' \$cfg; then
+    sed -i 's#^bind-addr:.*#bind-addr: 0.0.0.0:8080#' \$cfg
+  else
+    printf 'bind-addr: 0.0.0.0:8080\n' >> \$cfg
+  fi
+else
+  cat > \$cfg <<'EOF'
+bind-addr: 0.0.0.0:8080
+auth: password
+password: changeme
+cert: false
+EOF
+fi
+"
+
+  if command -v systemctl >/dev/null 2>&1; then
+    log "Enabling and starting code-server service for user '$LOCAL_USER'."
+    run_privileged systemctl enable --now "code-server@${LOCAL_USER}"
+  else
+    log "systemctl not found; start code-server manually for user '$LOCAL_USER'."
+  fi
+}
+
+install_code_server_as_root() {
   if run_as_local_user_shell "$LOCAL_USER" "command -v code-server >/dev/null 2>&1"; then
     log "code-server is already installed system-wide."
+    install_code_server_as_user
     return 0
   fi
 
@@ -154,6 +188,7 @@ install_code_server_as_user() {
   # The upstream installer needs root for dpkg; run it as root to avoid nested su prompts.
   log "Installing code-server system-wide."
   run_privileged sh -c 'curl -fsSL https://code-server.dev/install.sh | sh'
+  install_code_server_as_user
 }
 
 install_claude_code_as_user() {
@@ -985,7 +1020,7 @@ Run this command to get the pairing URL:
 EOF
     fi
     cat <<EOF
-SCRIPT_MARKER: externaltailscale
+SCRIPT_MARKER: codeserverip
 
 After linking completes, re-run this installer to apply selective sync using:
   PREFIX_PATH=$PREFIX_PATH
@@ -1002,7 +1037,7 @@ EOF
     wait_rc=$?
     if [[ "$wait_rc" -eq 10 ]]; then
       cat <<EOF
-SCRIPT_MARKER: externaltailscale
+SCRIPT_MARKER: codeserverip
 
 Dropbox needs linking before selective sync can be applied.
 Run:
@@ -1037,7 +1072,7 @@ if [[ "${EUID}" -ne 0 ]]; then
 fi
 
 INSTALL_DROPBOX="${INSTALL_DROPBOX:-n}"
-printf 'SCRIPT_MARKER: externaltailscale\n'
+printf 'SCRIPT_MARKER: codeserverip\n'
 if prompt_yes_no "Install/keep Dropbox (headless daemon + selective sync)?" "${INSTALL_DROPBOX}"; then
   INSTALL_DROPBOX="y"
 else
@@ -1113,7 +1148,7 @@ if prompt_yes_no "Install/keep code-server (system-wide)?" "n"; then
   INSTALL_CODE_SERVER="y"
 fi
 if [[ "$INSTALL_CODE_SERVER" == "y" ]]; then
-  install_code_server_as_user
+  install_code_server_as_root
 else
   log "Skipping code-server installation."
 fi
@@ -1152,7 +1187,7 @@ download_update_script_as_user
 
 if [[ "$INSTALL_DROPBOX" == "y" ]]; then
   cat <<EOF
-SCRIPT_MARKER: externaltailscale
+SCRIPT_MARKER: codeserverip
 
 Install complete (headless Dropbox, no Docker).
 
@@ -1180,7 +1215,7 @@ To install tailscale run the following command on the proxmox host:
 EOF
 else
   cat <<EOF
-SCRIPT_MARKER: externaltailscale
+SCRIPT_MARKER: codeserverip
 
 Install complete.
 
