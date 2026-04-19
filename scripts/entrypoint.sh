@@ -92,22 +92,65 @@ wait_for_dropbox_ready() {
   local max_wait=300
   local elapsed=0
   local status
+  local last_reported=-10
 
   log "Waiting for Dropbox daemon to initialize..."
   while (( elapsed < max_wait )); do
-    if status="$(run_dropbox_cli status 2>/dev/null || true)"; then
-      case "$status" in
-        *"Up to date"*|*"Syncing"*|*"Connecting"*|*"Downloading"*|*"Indexing"*)
-          log "Dropbox is responding: $status"
-          return 0
-          ;;
-      esac
+    status="$(run_dropbox_cli status 2>/dev/null || true)"
+    case "$status" in
+      *"Up to date"*|*"Syncing"*|*"Connecting"*|*"Downloading"*|*"Indexing"*)
+        log "Dropbox is responding: $status"
+        return 0
+        ;;
+    esac
+
+    if (( elapsed - last_reported >= 10 )); then
+      log "Still waiting for Dropbox daemon... (${elapsed}s elapsed, status: ${status:-<empty>})"
+      last_reported=$elapsed
     fi
+
     sleep 2
     elapsed=$((elapsed + 2))
   done
 
   log "Dropbox did not become ready in ${max_wait}s. Current status: $(run_dropbox_cli status 2>/dev/null || true)"
+  return 1
+}
+
+is_link_required_status() {
+  local status="${1:-}"
+  [[ "$status" == *"not linked"* || "$status" == *"This computer isn't linked"* || "$status" == *"isn't linked to any Dropbox account"* || "$status" == *"/cli_link_nonce"* ]]
+}
+
+wait_for_dropbox_sync_api_ready() {
+  local max_wait=420
+  local elapsed=0
+  local status
+  local last_reported=-10
+
+  log "Waiting for Dropbox CLI sync API to be ready..."
+  while (( elapsed < max_wait )); do
+    status="$(run_dropbox_cli status 2>/dev/null || true)"
+    if is_link_required_status "$status"; then
+      log "Dropbox is running but not linked yet."
+      return 10
+    fi
+
+    if run_dropbox_cli exclude list >/dev/null 2>&1; then
+      log "Dropbox exclude API is ready."
+      return 0
+    fi
+
+    if (( elapsed - last_reported >= 10 )); then
+      log "Still waiting for Dropbox CLI sync API... (${elapsed}s elapsed, status: ${status:-<empty>})"
+      last_reported=$elapsed
+    fi
+
+    sleep 2
+    elapsed=$((elapsed + 2))
+  done
+
+  log "Timed out waiting for Dropbox exclude API readiness. Current status: $(run_dropbox_cli status 2>/dev/null || true)"
   return 1
 }
 
@@ -276,7 +319,16 @@ sleep 3
 show_link_hint_if_needed
 
 if wait_for_dropbox_ready; then
-  configure_selective_sync
+  if wait_for_dropbox_sync_api_ready; then
+    configure_selective_sync
+  else
+    rc=$?
+    if [[ "$rc" -eq 10 ]]; then
+      log "Skipping selective sync until account linking is complete."
+    else
+      log "Skipping selective sync for now because Dropbox API is still initializing."
+    fi
+  fi
 fi
 
 log "Dropbox container is running. Daemon PID: ${DAEMON_PID}"
