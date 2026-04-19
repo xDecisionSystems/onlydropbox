@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DROPBOX_USER="${DROPBOX_USER:-dropbox}"
+DROPBOX_USER="dropbox"
 DROPBOX_HOME="$(getent passwd "$DROPBOX_USER" | cut -d: -f6)"
 DROPBOX_CLI="${DROPBOX_HOME}/.local/bin/dropbox"
 DROPBOX_DAEMON="${DROPBOX_HOME}/.dropbox-dist/dropboxd"
@@ -29,8 +29,25 @@ trim() {
   printf '%s' "$s"
 }
 
+resolve_prefix_path_from_account_vars() {
+  local account_root="${ACCOUNT_ROOT:-}"
+  local account_name="${ACCOUNT_NAME:-}"
+
+  account_root="$(trim "$account_root")"
+  account_name="$(trim "$account_name")"
+
+  if [[ -z "$account_root" || -z "$account_name" ]]; then
+    log "ACCOUNT_ROOT and ACCOUNT_NAME are required in Docker mode."
+    exit 1
+  fi
+
+  account_root="${account_root%/}"
+  account_name="${account_name#/}"
+  PREFIX_PATH_RESOLVED="${account_root}/${account_name}"
+}
+
 normalize_prefix_path() {
-  local raw="${PREFIX_PATH:-/}"
+  local raw="${PREFIX_PATH_RESOLVED:-/}"
   raw="$(trim "$raw")"
 
   if [[ -z "$raw" || "$raw" == "/" ]]; then
@@ -117,6 +134,7 @@ is_ancestor_of_allowed() {
 }
 
 configure_selective_sync() {
+  resolve_prefix_path_from_account_vars
   parse_sync_folders
   normalize_prefix_path
 

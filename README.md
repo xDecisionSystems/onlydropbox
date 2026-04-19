@@ -5,11 +5,12 @@ Codedrop provides two ways to run Dropbox with selective sync:
 - Docker mode (`docker-compose.yml`)
 - LXC interactive installer (`install-codedrop-lxc.sh`)
 
-Selective sync is controlled by:
+Selective sync inputs:
 
-- `PREFIX_PATH`: base Dropbox path (default `/`)
-- `SYNC_FOLDERS`: comma-separated allow-list of relative folder paths under `PREFIX_PATH` (nested paths supported)
+- Docker mode: `ACCOUNT_ROOT` + `ACCOUNT_NAME` + `SYNC_FOLDERS`
+- LXC mode: `PREFIX_PATH` + `SYNC_FOLDERS`
 
+In Docker mode, `SYNC_FOLDERS` is interpreted relative to `ACCOUNT_ROOT/ACCOUNT_NAME`.
 If `SYNC_FOLDERS` is empty, selective sync is left unchanged.
 
 ## Docker Quick Start
@@ -23,8 +24,9 @@ cp .env.example .env
 2. Edit `.env`:
 
 ```dotenv
-PREFIX_PATH=/Team
-SYNC_FOLDERS=Work,Photos,Taxes
+ACCOUNT_ROOT=UCF Dropbox
+ACCOUNT_NAME=John Doe
+SYNC_FOLDERS=Apps/Overleaf,Research/Papers
 ```
 
 3. Start:
