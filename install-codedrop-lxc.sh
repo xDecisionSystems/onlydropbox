@@ -156,33 +156,6 @@ install_code_server_as_user() {
   run_privileged sh -c 'curl -fsSL https://code-server.dev/install.sh | sh'
 }
 
-install_tailscale_as_root() {
-  if command -v tailscale >/dev/null 2>&1; then
-    log "Tailscale is already installed."
-    return 0
-  fi
-
-  if ! command -v curl >/dev/null 2>&1; then
-    error "curl is required to install Tailscale."
-  fi
-
-  log "Installing Tailscale."
-  run_privileged sh -c 'curl -fsSL https://tailscale.com/install.sh | sh'
-}
-
-enable_tailscaled_service() {
-  if ! command -v tailscale >/dev/null 2>&1; then
-    return 0
-  fi
-
-  if command -v systemctl >/dev/null 2>&1; then
-    log "Enabling and starting tailscaled service."
-    run_privileged systemctl enable --now tailscaled
-  else
-    log "systemctl not found; start tailscaled manually before running 'tailscale up'."
-  fi
-}
-
 install_claude_code_as_user() {
   local claude_extension_id="anthropic.claude-code"
 
@@ -1012,7 +985,7 @@ Run this command to get the pairing URL:
 EOF
     fi
     cat <<EOF
-SCRIPT_MARKER: fandom
+SCRIPT_MARKER: externaltailscale
 
 After linking completes, re-run this installer to apply selective sync using:
   PREFIX_PATH=$PREFIX_PATH
@@ -1029,7 +1002,7 @@ EOF
     wait_rc=$?
     if [[ "$wait_rc" -eq 10 ]]; then
       cat <<EOF
-SCRIPT_MARKER: fandom
+SCRIPT_MARKER: externaltailscale
 
 Dropbox needs linking before selective sync can be applied.
 Run:
@@ -1064,7 +1037,7 @@ if [[ "${EUID}" -ne 0 ]]; then
 fi
 
 INSTALL_DROPBOX="${INSTALL_DROPBOX:-n}"
-printf 'SCRIPT_MARKER: fandom\n'
+printf 'SCRIPT_MARKER: externaltailscale\n'
 if prompt_yes_no "Install/keep Dropbox (headless daemon + selective sync)?" "${INSTALL_DROPBOX}"; then
   INSTALL_DROPBOX="y"
 else
@@ -1079,18 +1052,6 @@ run_privileged env DEBIAN_FRONTEND=noninteractive apt-get install -y \
   tar \
   python3 \
   procps
-
-INSTALL_TAILSCALE="n"
-if command -v tailscale >/dev/null 2>&1; then
-  log "Tailscale is already installed; skipping Tailscale prompt."
-  enable_tailscaled_service
-elif prompt_yes_no "Install Tailscale?" "n"; then
-  INSTALL_TAILSCALE="y"
-fi
-if [[ "$INSTALL_TAILSCALE" == "y" ]]; then
-  install_tailscale_as_root
-  enable_tailscaled_service
-fi
 
 if [[ "$INSTALL_DROPBOX" == "y" ]]; then
   log "Installing Dropbox prerequisites."
@@ -1191,7 +1152,7 @@ download_update_script_as_user
 
 if [[ "$INSTALL_DROPBOX" == "y" ]]; then
   cat <<EOF
-SCRIPT_MARKER: fandom
+SCRIPT_MARKER: externaltailscale
 
 Install complete (headless Dropbox, no Docker).
 
@@ -1213,13 +1174,13 @@ Useful commands:
   $DROPBOX_CLI stop
   $HOME_DIR/.local/bin/update-codedrop-sync-lxc.sh
 
-If you installed Tailscale, bring it online with:
-  tailscale up
+To install tailscale run the following command on the proxmox host:
+  bash -c "$(curl -fsSL https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/tools/addon/add-tailscale-lxc.sh)"
 
 EOF
 else
   cat <<EOF
-SCRIPT_MARKER: fandom
+SCRIPT_MARKER: externaltailscale
 
 Install complete.
 
@@ -1228,8 +1189,8 @@ Re-run this installer any time and answer "yes" to install Dropbox later.
 Update helper script is available at:
   $HOME_DIR/.local/bin/update-codedrop-sync-lxc.sh
 
-If you installed Tailscale, bring it online with:
-  tailscale up
+To install tailscale run the following command on the proxmox host:
+  bash -c "$(curl -fsSL https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/tools/addon/add-tailscale-lxc.sh)"
 
 EOF
 fi
