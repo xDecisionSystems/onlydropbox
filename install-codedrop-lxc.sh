@@ -1081,6 +1081,7 @@ install_and_configure_dropbox() {
     log "Installing Dropbox headless daemon to $DROPBOX_DIST_DIR"
     tmp_tar="$(mktemp)"
     wget -qO "$tmp_tar" "$DROPBOX_DOWNLOAD_URL"
+    run_privileged chown "$LOCAL_USER":"$LOCAL_USER" "$tmp_tar"
     run_as_local_user "$LOCAL_USER" tar -xzf "$tmp_tar" -C "$HOME_DIR"
     rm -f "$tmp_tar"
   fi
